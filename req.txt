@@ -1,0 +1,5 @@
+pymysql
+fastapi
+modelscope
+sqlalchemy
+qdrant_client
