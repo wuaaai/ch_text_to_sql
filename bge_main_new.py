@@ -2,33 +2,29 @@ import datetime
 import random
 import time
 import re
+
+import requests
 from echarts import Echart, Legend, Bar, Line, Axis, Tooltip, Pie
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.params import Body, Form
 from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Filter, FieldCondition, MatchValue, MatchAny
-from sentence_transformers import SentenceTransformer, CrossEncoder
-import torch
 import json
 from starlette.middleware.cors import CORSMiddleware
-from modelscope import AutoModelForCausalLM, AutoTokenizer
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-import traceback
 from sqlalchemy import create_engine
 import ahocorasick
 import redis
 from collections import defaultdict
-# import redis.asyncio as redis
-# pip install pyahocorasick
 
 import collections
 from typing import List, Dict, Optional, Tuple, Any
 
 from starlette.responses import StreamingResponse, JSONResponse
 
-BASE_URL = "http://192.168.100.160:8989/"
+BASE_URL = "http://192.168.100.160:8991"
 api_config = {
     "api_key": "sk-d507bd835e174d99b57757f3010dfd02",
     "base_url": "https://api.deepseek.com",
@@ -39,6 +35,29 @@ api_config = {
     "timeout": 60,
 
 }
+def get_embedding1(text_list):
+    url = f"{BASE_URL}/embed"
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, headers=headers, json=text_list)
+    return response.json()
+
+
+def get_text2sql(question,demo,evidence):
+    try:
+        data = requests.post(url=f"{BASE_URL}/text2sql",
+                            json={"question": question, "demo": json.dumps(demo), "evidence": evidence},
+                            timeout=30
+                            )
+        ret = data.json()
+        print("text2sql->",ret)
+    except BaseException as e:
+        ret = {"status":"error", "message": str(e)}
+
+    return ret
 
 
 class Text2SQLTableRanker:
@@ -252,33 +271,12 @@ async def load_models():
 
             }})
     app.state.public_data = table_dict2
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"加载 embedding 模型...{device}")
-    app.state.embedding_model = SentenceTransformer(
-        '/mnt/feng/models/bge-m3',
-        device=device
-    )
-    app.state.embedding_model.eval()
-
-    # 加载 rerank 模型
-    app.state.rerank_model = CrossEncoder(
-        '/mnt/feng/models/bge-rerank',
-        device=device
-    )
-    local_path = '/mnt/feng/models/xiyan3b'
-    app.state.sql_model = AutoModelForCausalLM.from_pretrained(
-        local_path,
-        torch_dtype=torch.bfloat16,
-        device_map="auto"
-    )
     app.state.chat = OpenAI(
         api_key=api_config["api_key"],
         base_url=api_config["base_url"],
         max_retries=2,
         timeout=60
     )
-
-    app.state.sql_tokenizer = AutoTokenizer.from_pretrained(local_path)
 
     with open('table_info.json', 'r', encoding='utf-8') as f4:
         app.state.use_table_info = json.load(f4)
@@ -782,169 +780,6 @@ async def shutdown():
     app.state.redis.close()
 
 
-@app.post("/embed", summary='embedding模型接口-bge-m3 1024维度')
-async def embed(texts: list[str]):
-    model = app.state.embedding_model
-    with torch.no_grad():
-        embeddings = model.encode(texts, convert_to_tensor=True)
-    return {"embeddings": embeddings.cpu().numpy().tolist()}
-
-
-@app.post("/rerank", summary='rerank模型接口')
-async def rerank(query: str, documents: list[str]):
-    model = app.state.rerank_model
-    scores = model.predict([(query, doc) for doc in documents])
-    ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    ranked_documents = [documents[i] for i in ranked_indices]
-    ranked_scores = [float(scores[i]) for i in ranked_indices]
-    return {
-        "ranked_documents": ranked_documents,
-        "scores": ranked_scores
-    }
-
-
-@app.post("/table_info", summary="人大表结构信息查询：不传table_name时默认返回所有表的粗略信息,传中文名称时返回具体信息")
-async def table_info(table_name: str = None):
-    if table_name not in app.state.public_data:
-        res = []
-        for x, y in app.state.public_data.items():
-            tables = y['tables']
-            t_name, t_info = "", {}
-            for k, v in tables.items():
-                t_name = k
-                t_info = v
-            res.append({
-                "表名：": x,
-                "英文表名：": t_name,
-                "列数": len(t_info['fields']),
-            })
-        return res
-    else:
-        data = app.state.public_data[table_name]['tables']
-
-        t_name, t_info = "", {}
-        for k, v in data.items():
-            t_name = k
-            t_info = v
-        res = {
-            "表名": table_name,
-            "英文表名：": t_name,
-            "表信息：": t_info,
-        }
-
-        return res
-
-
-@app.post("/sql2")
-async def sql2(question: str, table_name: str = None, evidence: str = ""):
-    if table_name not in app.state.public_data:
-        tables_list = [k for k in app.state.public_data.keys()]
-        scores = app.state.rerank_model.predict([(question, doc) for doc in tables_list])
-        ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-        ranked_documents = [tables_list[i] for i in ranked_indices]
-        ranked_scores = [float(scores[i]) for i in ranked_indices]
-        desc_info = f"表名：{ranked_documents[0]}-相关度：{ranked_scores[0]}"
-        print(desc_info)
-        demo = app.state.public_data[ranked_documents[0]]
-
-    else:
-        desc_info = f"指定表名：{table_name}"
-        demo = app.state.public_data[table_name]
-    # demo只会选中一张表，因为后续要根据这张表去进行sql优化
-    ## dialects -> ['SQLite', 'PostgreSQL', 'MySQL']
-    prompt = app.state.nl2sqlite_template_cn.format(
-        dialect="MySQL", db_schema=demo,
-        question=question, evidence=evidence)
-    message = [{'role': 'user', 'content': prompt}]
-
-    sss = app.state.sql_tokenizer.apply_chat_template(
-        message,
-        tokenize=False,
-        add_generation_prompt=True
-    )
-    model_inputs = app.state.sql_tokenizer([sss], return_tensors="pt").to(app.state.sql_model.device)
-
-    generated_ids = app.state.sql_model.generate(
-        **model_inputs,
-        pad_token_id=app.state.sql_tokenizer.pad_token_id,
-        eos_token_id=app.state.sql_tokenizer.eos_token_id,
-        max_new_tokens=1024,
-        temperature=0.1,
-        top_p=0.8,
-        do_sample=True,
-    )
-    generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-    ]
-    sql_query = app.state.sql_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-    # 优化sql生成过程不带符号的问题
-    try:
-        table_data_col = list(demo['tables'].values())[0]['fields'].keys()
-    except:
-        table_data_col = None
-        print("没有找到table_data_col。。。")
-    if table_data_col:
-        for u in table_data_col:
-            if u + ' ' in sql_query and f"`{u}` " not in sql_query:
-                sql_query = sql_query.replace(u + ' ', f"`{u}` ")
-            if u + ',' in sql_query and f"`{u}`," not in sql_query:
-                sql_query = sql_query.replace(u + ',', f"`{u}`,")
-            if u + ';' in sql_query and f"`{u}`;" not in sql_query:
-                sql_query = sql_query.replace(u + ';', f"`{u}`;")
-
-    try:
-        # 使用 SQLAlchemy 执行 SQL 查询
-        with db_engine.connect() as connection:
-            # 使用 text() 包装 SQL 语句以支持原生 SQL
-            result = connection.execute(text(sql_query))
-
-            # 如果是查询语句（SELECT），获取结果
-            if sql_query.strip().upper().startswith('SELECT'):
-                # 获取列名
-                columns = result.keys()
-
-                # 获取所有行数据
-                rows = []
-                for row in result:
-                    # 将 Row 对象转换为字典
-                    row_dict = {}
-                    for i, column in enumerate(columns):
-                        row_dict[column] = row[i]
-                    rows.append(row_dict)
-
-                return {
-                    "success": True,
-                    "desc_info": desc_info,
-                    "data": rows,
-                    "columns": list(columns),
-                    "row_count": len(rows),
-                    "sql_query": sql_query,
-                    "message": "SQL 查询执行成功"
-                }
-
-
-    except SQLAlchemyError as e:
-        # 捕获 SQLAlchemy 相关错误
-        error_msg = str(e.__cause__) if e.__cause__ else str(e)
-        return {
-            "success": False,
-            "desc_info": desc_info,
-            "error_type": "SQLAlchemyError",
-            "error_message": error_msg,
-            "sql_query": sql_query
-        }
-    except Exception as e:
-        # 捕获其他异常
-        return {
-            "success": False,
-            "desc_info": desc_info,
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-            "sql_query": sql_query,
-            "traceback": traceback.format_exc()
-        }
-
-
 def wait_info(search_point, check_sheng, use_table_info, source):
     wait_tables = []
     for x in search_point.points:
@@ -959,62 +794,6 @@ def wait_info(search_point, check_sheng, use_table_info, source):
     return wait_tables
 
 
-@app.post("/model_chat_test")
-def model_chat_test(question: str, name: str, data1: dict, data2: dict):
-    prompt = f"""
-        # Role
-    你是一名专业的 Text-to-SQL 语义解析助手。你的任务是根据用户原始自然语言问题，结合提供的数据库 schema 映射信息，将问题重写为逻辑清晰、术语精确的“优化后问题”。
-
-    # Input Data
-    1. **用户原始问题**: 2025年1月河北省教育和其他支出的预算是多少？
-    2.**使用名称**:项目名称
-    3. **名称映射表** (用户词汇 -> 数据库实际值):
-    {{"教育": "教育支出", "其他支出": "其他支出"}}
-    4. **列名映射表** (用户词汇 -> 数据库实际列名):
-    {{"预算": "预算数"}}
-
-    # Constraints & Rules
-    1. **术语替换**: 必须严格使用【使用名称】、【名称映射表】和【列名映射表】中的“数据库实际值/列名”替换用户问题中的对应口语化词汇。
-    2. **逻辑保留**: 保持原问题的时间、地点、筛选条件（如“和”、“或”）及查询意图不变。
-    3. **句式规范**: 优化后的问题应是一个完整的陈述句或疑问句，结构通常为：“[时间][地点]项目名称为[具体项目值]的[具体列名]是多少？”
-    4. **无多余输出**: 最终输出**仅包含**优化后的问题文本，不要包含任何解释、前缀（如“优化结果：”）或标点符号以外的字符。
-
-    # Few-Shot Example
-    **输入**:
-    - 用户原始问题: 2025年1月河北省教育和其他支出的预算是多少？
-
-    - 项目名称映射表: {{"教育": "教育支出", "其他支出": "其他支出"}}
-    - 列名映射表: {{"预算": "预算数"}}
-
-    **输出**:
-    2025年1月河北省项目名称为教育支出和其他支出的预算数是多少？
-
-    # Execution
-    请根据上述规则处理以下输入：
-
-    **输入**:
-    - 用户原始问题: {question}
-    - 使用名称：{name}
-    - 名称映射表: {data1}
-    - 列名映射表: {data2}
-    **输出**:
-        """
-    new_message = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": question},
-    ]
-    create_params = {
-        "model": "deepseek-chat",
-        "messages": new_message,
-        "temperature": 0.7,
-        "max_tokens": 8192,
-        "stream": False,
-        "timeout": api_config["timeout"]
-    }
-    # params_copy["extra_body"] = {"thinking": {"type": "disabled"}}
-    response = app.state.chat.chat.completions.create(**create_params)
-    ret = response.choices[0].message.content
-    return ret
 
 
 def model_chat(chat, question, prompt):
@@ -1370,7 +1149,7 @@ def ensure_year_month_in_select(sql: str, sss) -> str:
     return new_sql + ';'
 
 
-def ret_format(msg):
+def ret_format(msg,stop=None):
     return json.dumps({
         "id": f"chatcmpl-{int(time.time())}",
         "object": "chat.completion.chunk",
@@ -1381,7 +1160,7 @@ def ret_format(msg):
             "delta": {
                 "content": msg
             },
-            "finish_reason": None
+            "finish_reason": stop
         }]
     }) + "\n\n"
 
@@ -1548,20 +1327,7 @@ def creat_image_data(data, x_axis_label, question, app):
     finally:
         app.state.redis.delete(question.strip() + "_task_cache")
 
-
-def get_agg_name(x):
-    all_dd = {"COUNT": "计数", "SUM": "求和", "AVG": "平均值", "MIN": "最小值", "MAX": "最大值"}
-    ret = ""
-    for w, y in all_dd.items():
-        if w in x:
-            ret = y
-            break
-    else:
-        ret = ""
-    return ret
-
-
-def check_select_col(col_dict, select_list):
+def check_select_col(col_dict,select_list):
     check = []
     for x in select_list:
         if "(" in x:
@@ -1574,6 +1340,17 @@ def check_select_col(col_dict, select_list):
             check.append(x in col_dict)
     return all(check)
 
+
+def get_agg_name(x):
+    all_dd = {"COUNT": "计数", "SUM": "求和", "AVG": "平均值", "MIN": "最小值", "MAX": "最大值"}
+    ret = ""
+    for w,y in all_dd.items():
+        if w in x:
+            ret = y
+            break
+    else:
+        ret = ""
+    return  ret
 
 @app.post("/v1/chat/completions")
 async def sql3(request: Request, background_tasks: BackgroundTasks):
@@ -1668,10 +1445,11 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
 
             wait_tables.extend(wait_info(existing_points, check_sheng, app.state.use_table_info, source="项目匹配"))
         yield ret_format(f"已找到{len(project_words)}个关键词，分别为{','.join(project_words)}\n\n")
-
-        with torch.no_grad():
-            embedding = app.state.embedding_model.encode([question], convert_to_tensor=True)
-            query_vector = embedding.cpu().numpy().tolist()[0]
+        try:
+            query_vector = get_embedding1([question])['embeddings'][0]
+        except:
+            yield ret_format("模型服务异常，请联系管理员维护！",stop="stop")
+            return
         search_filter = Filter(
             must=[FieldCondition(
                 key="cate",
@@ -1823,39 +1601,20 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
 
             en_table_name = app.state.use_table_info[table_name]['table']
             col_name_dict = {k: v['comment'] for k, v in demo['tables'][en_table_name]['fields'].items()}
-
+            # TODO:优化evidence 为列映射和模式说明
             evidence = """
                question：2025年12月项目名称为个人所得税的预算数是多少？
                answer: SELECT `YEAR_MONTH`,`YSS`  FROM `RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC` WHERE `YEAR_MONTH` = '202512' AND `XM_NAME` = '个人所得税';
                question：2025年2月到2025年10月期间科目编码为205的本月金额分别是多少？
                answer:SELECT `YEAR_MONTH`,`BYS_JE` FROM RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC WHERE `YEAR_MONTH` BETWEEN '202502' AND '202510' AND `XM_CODE` = '205'  ORDER BY XH;
                """
-            ## dialects -> ['SQLite', 'PostgreSQL', 'MySQL']
-            prompt = app.state.nl2sqlite_template_cn.format(
-                dialect="MySQL", db_schema=demo,
-                question=new_question, evidence=evidence)
-            message = [{'role': 'user', 'content': prompt}]
+            sql_query_json = get_text2sql(new_question, demo, evidence)
+            if sql_query_json['status']=='success':
+                sql_query = sql_query_json['sql_query']
+            else:
+                yield ret_format(f"模型服务异常，请联系管理员！",stop="stop")
+                return
 
-            sss = app.state.sql_tokenizer.apply_chat_template(
-                message,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            model_inputs = app.state.sql_tokenizer([sss], return_tensors="pt").to(app.state.sql_model.device)
-
-            generated_ids = app.state.sql_model.generate(
-                **model_inputs,
-                pad_token_id=app.state.sql_tokenizer.pad_token_id,
-                eos_token_id=app.state.sql_tokenizer.eos_token_id,
-                max_new_tokens=1024,
-                temperature=0.1,
-                top_p=0.8,
-                do_sample=True,
-            )
-            generated_ids = [
-                output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-            ]
-            sql_query = app.state.sql_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
             # 优化sql生成过程不带符号的问题
             # 默认使用序号排序
             try:
@@ -1872,8 +1631,6 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
                     if u + ';' in sql_query and f"`{u}`;" not in sql_query:
                         sql_query = sql_query.replace(u + ';', f"`{u}`;")
 
-            # if "ORDER BY" not in sql_query:
-            #     sql_query = sql_query.replace(';', " ") + " ORDER BY XH;"
             # 这里只是为了补上必要的时间字段
             match = re.search(r'SELECT\s+(.*?)\s+FROM', sql_query, re.IGNORECASE)
             if match:
@@ -1890,7 +1647,7 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
             yield ret_format(f"已生成 SQL 语句为：{sql_query}\n\n")
             try:
                 # 使用 SQLAlchemy 执行 SQL 查询
-                with db_engine.connect() as connection:
+                with (db_engine.connect() as connection):
                     # 使用 text() 包装 SQL 语句以支持原生 SQL
                     result = connection.execute(text(sql_query))
 
@@ -1901,6 +1658,7 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
                         # 获取所有行数据
                         rows = []
                         select_cn_keys = {}
+
                         for row in result:
                             # 将 Row 对象转换为字典
                             row_dict = {}
@@ -1938,6 +1696,7 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
                                     "finish_reason": "stop"
                                 }]
                             }) + "\n\n"
+                            return
                         else:
                             # 对rows进行重构，用于适应多类目之间的对比分析，去除完全重复的列目
                             # 重构数据为适合的数据格式= 上海市-个人所得税-本月数金额（万元）| 200.0万元
@@ -2072,229 +1831,6 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
                 }
             }
         )
-
-
-@app.post("/get_query_info", summary="获取问题信息接口")
-async def get_query_info(
-        question: str = Form(description='问题')):
-    # 此接口不用指定表名-会在目前的四张表中自己根据问题选一张
-    # demo只会选中一张表，因为后续要根据这张表去进行sql优化
-    # 多个词命中情况--多表 预算数和一般公共预算收入
-    # 多个词命中情况--一表多指标
-    # TODO支持结合记忆情况对问题和数据进行适当优化。
-    # TODO:问题可能会被拆分成两个表的查询语句，目前先不考虑连表和多表查询情况
-    question_words = app.state.words_match.find_all(question)
-
-    # TODO:1.多表数据对比类问题 2，数值比对问题比如小于1亿的问题
-    # all_info = {}
-    # 如果问题中没有出现明确的省本级意图，(省级、本级)
-    # 清理结果中的省本级的表。如果出现省本级字眼，其他跟省本级无关的表剔除
-    # 1.先找到所有科目相关的关键词对问题进行分词，判断关键词是否出现，此动作可以直接定位几张表
-    # 2.对问题直接进行表描述级的向量检索，此动作也可以找到相关的top3表
-    # 3.如果关键词没找到，直接根据表检索结果确定
-    # 4.对于4本账的情况分清楚省本级，省级的表定位
-
-    wait_tables = []
-    data1 = {}
-    data2 = {}
-    check_sheng = 1 if any(char in question for char in ['省级', "本级"]) else 0
-    if question_words:
-        ques_words = list(set(question_words))
-        query_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="cate",
-                    match=MatchValue(value="科目/项目")
-                ),
-                FieldCondition(
-                    key="words",
-                    match=MatchAny(any=ques_words)
-                )
-            ]
-        )
-        existing_points = app.state.client.query_points(
-            collection_name=app.state.collection_name,
-            # query=dummy_vector,
-            query_filter=query_filter,
-            limit=len(ques_words),
-            with_payload=True,
-            with_vectors=False,
-            score_threshold=None  # 不过滤分数
-        )
-        # 构建data1映射字典
-        for ww in existing_points.points:
-            for n, u in enumerate(ww.payload["zh_table"]):
-                if u not in data1:
-                    data1[u] = [{ww.payload["words"]: ww.payload["select_code"][n]}]
-                else:
-                    data1[u].append({ww.payload["words"]: ww.payload["select_code"][n]})
-
-        wait_tables.extend(wait_info(existing_points, check_sheng, app.state.use_table_info, source="项目匹配"))
-
-    with torch.no_grad():
-        embedding = app.state.embedding_model.encode([question], convert_to_tensor=True)
-        query_vector = embedding.cpu().numpy().tolist()[0]
-    search_filter = Filter(
-        must=[FieldCondition(
-            key="cate",
-            match=MatchValue(value="表描述"))])
-    results = app.state.client.query_points(
-        collection_name=app.state.collection_name,
-        query=query_vector,
-        query_filter=search_filter,
-        limit=3,
-        with_payload=True,
-        with_vectors=False,
-        score_threshold=None  # 如果需要最低相似度阈值，可在此设置 (如 0.7)
-    )
-    wait_tables.extend(wait_info(results, check_sheng, app.state.use_table_info, source="表描述"))
-    # 相关列匹配,现在用的强匹配
-    col_words = app.state.col_match.find_all(question)
-    if col_words:
-        col_words = list(set(col_words))
-        query_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="cate",
-                    match=MatchValue(value="检索项")
-                ),
-                FieldCondition(
-                    key="words",
-                    match=MatchAny(any=col_words)
-                )
-            ]
-        )
-        col_points = app.state.client.query_points(
-            collection_name=app.state.collection_name,
-            query_filter=query_filter,
-            limit=len(col_words),
-            with_payload=True,
-            with_vectors=False,
-            score_threshold=None  # 不过滤分数
-        )
-        for yy in col_points.points:
-            for n, u in enumerate(yy.payload["zh_table"]):
-                if u not in data2:
-                    data2[u] = [{yy.payload["words"]: yy.payload["table_select"][n]}]
-                else:
-                    data2[u].append({yy.payload["words"]: yy.payload["table_select"][n]})
-        wait_tables.extend(wait_info(col_points, check_sheng, app.state.use_table_info, source="列匹配"))
-    ranker = Text2SQLTableRanker()
-    print("wait_tables:", wait_tables)
-    result = ranker.rank(wait_tables)
-    if result.get("status") == "SUCCESS":
-        table_name = result['selected_table']
-        name = app.state.use_table_info[table_name]['project_key'][0]
-
-        unit_dict = {value: key for key, values in app.state.use_table_info[table_name]['unit'].items() for value in
-                     values}
-        # TODO:基于大模型回复不稳定的问题提出优化方案
-        prompt4 = app.state.prompt4.format(name=name,
-                                           data1=data1.get(table_name, {}), data2=data2.get(table_name, {}),
-                                           )
-        new_question = model_chat(app.state.chat, question, prompt4)
-        print(new_question, "--改良后的问题")
-        # 如果选中了表，那么根据选择过程中的数据去优化问题
-        # 这里要使用一次模型
-        # 5.根据选中的表进行sql生成,要求每个步骤把定位的内容实时输出到控制台
-        demo = app.state.public_data[table_name]
-        en_table_name = app.state.use_table_info[table_name]['table']
-        col_name_dict = {k: v['comment'] for k, v in demo['tables'][en_table_name]['fields'].items()}
-
-        evidence = """
-           **重要提醒**：生成的sql必须将检索的日期维度或者地区维度带上
-           question：2025年12月项目名称为个人所得税的预算数是多少？
-           answer: SELECT `YEAR_MONTH`,`YSS`  FROM `RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC` WHERE `YEAR_MONTH` = '202512' AND `XM_NAME` = '个人所得税';
-           question：2025年2月到202510月期间科目编码为205的本月金额分别是多少？
-           answer:SELECT `YEAR_MONTH`,`BYS_JE` FROM RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC WHERE `YEAR_MONTH` BETWEEN '202502' AND '202510' AND `XM_CODE` = '205'  ORDER BY XH;
-           """
-        prompt = app.state.nl2sqlite_template_cn.format(
-            dialect="MySQL", db_schema=demo,
-            question=new_question, evidence=evidence)
-        message = [{'role': 'user', 'content': prompt}]
-
-        sss = app.state.sql_tokenizer.apply_chat_template(
-            message,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-        model_inputs = app.state.sql_tokenizer([sss], return_tensors="pt").to(app.state.sql_model.device)
-
-        generated_ids = app.state.sql_model.generate(
-            **model_inputs,
-            pad_token_id=app.state.sql_tokenizer.pad_token_id,
-            eos_token_id=app.state.sql_tokenizer.eos_token_id,
-            max_new_tokens=1024,
-            temperature=0.1,
-            top_p=0.8,
-            do_sample=True,
-        )
-        generated_ids = [
-            output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-        ]
-        sql_query = app.state.sql_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        # 优化sql生成过程不带符号的问题
-        # 默认使用序号排序
-        try:
-            table_data_col = list(demo['tables'].values())[0]['fields'].keys()
-        except:
-            table_data_col = None
-            print("没有找到table_data_col。。。")
-        if table_data_col:
-            for u in table_data_col:
-                if u + ' ' in sql_query and f"`{u}` " not in sql_query:
-                    sql_query = sql_query.replace(u + ' ', f"`{u}` ")
-                if u + ',' in sql_query and f"`{u}`," not in sql_query:
-                    sql_query = sql_query.replace(u + ',', f"`{u}`,")
-                if u + ';' in sql_query and f"`{u}`;" not in sql_query:
-                    sql_query = sql_query.replace(u + ';', f"`{u}`;")
-
-        if "ORDER BY" not in sql_query:
-            sql_query = sql_query.replace(';', " ") + " ORDER BY XH;"
-        print("sql_query:", sql_query)
-        try:
-            # 使用 SQLAlchemy 执行 SQL 查询
-            with db_engine.connect() as connection:
-                # 使用 text() 包装 SQL 语句以支持原生 SQL
-                result = connection.execute(text(sql_query))
-
-                # 如果是查询语句（SELECT），获取结果
-                if sql_query.strip().upper().startswith('SELECT'):
-                    # 获取列名
-                    columns = result.keys()
-                    # 获取所有行数据
-                    rows = []
-                    for row in result:
-                        # 将 Row 对象转换为字典
-                        row_dict = {}
-                        for i, column in enumerate(columns):
-                            key = col_name_dict[column] if column in col_name_dict else column
-                            if column in unit_dict:
-                                row_dict[key] = f"{row[i]}{unit_dict[column]}"
-                            else:
-                                row_dict[key] = row[i]
-                        rows.append(row_dict)
-                    ret = {"status": 'success', "data": json.dumps(rows, ensure_ascii=False), "sql_query": sql_query,
-                           "new_question": new_question, "table_name": table_name,
-                           "demo": json.dumps(demo, ensure_ascii=False), "message": "success"
-                           }
-                    print("rows---->", ret)
-                    return ret
-
-
-        except SQLAlchemyError as e:
-            # 捕获 SQLAlchemy 相关错误
-            error_msg = str(e.__cause__) if e.__cause__ else str(e)
-            return {"status": "error", "message": f"执行SQL查询失败，错误信息为：{error_msg}"}
-
-        except Exception as e:
-            # 捕获其他异常
-            return {"status": "error", "message": f"执行SQL查询失败，错误信息为：{str(e)}"}
-
-    else:
-        return {"status": "error", "message": f"没有选中表时设计兜底策略"}
-        # TODO:没有选中表时设计兜底策略
-        # return {"status": "FAIL", "message": "没有找到相关表"}
 
 
 @app.post("/get_image_info", summary="获取图片信息")
