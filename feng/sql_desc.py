@@ -35,7 +35,7 @@ def json_run():
         # print(result)
 
 def schema_run(table_name):
-    with open('RDYS_PUBLIC_TBS_new.json', 'r', encoding='utf-8') as f:
+    with open('RDYS_PUBLIC_TBS.json', 'r', encoding='utf-8') as f:
         sql = json.loads(f.read())
         data = sql['tables'][table_name]
         print(f"表名：{data['comment']}")
@@ -44,7 +44,7 @@ def schema_run(table_name):
 
 
 def get_embedding1(text_list):
-    url = "http://192.168.100.160:8686/embed"
+    url = "http://192.168.100.160:8991/embed"
     headers = {
         "accept": "application/json",
         "Content-Type": "application/json"
@@ -116,22 +116,21 @@ table_info = {
 
 def table_info_create():
     """生成表描述"""
-    with open('RDYS_PUBLIC_TBS.json', 'r', encoding='utf-8') as f:
+    with open('text2sql_project/RDYS_PUBLIC_TBS_WU.json', 'r', encoding='utf-8') as f:
         sql = json.loads(f.read())
         table_info = {}
         tables = ["RDYS_LD_YSZX_YBGGYS_SBJZCWCQK",
                   "RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC",
                   "RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC",
-                  "RDYS_LD_YSZX_ZFXJJ_QSSRWCQK",
                   ]
         db_user_name = 'hbch'
         db_pwd = 'hbch2711'
         db_host = '192.168.100.160'
         port = 3306
-        db_name = 'RDYS_PUBLIC_TBS'
+        db_name = 'RDYS_PUBLIC_TBS_WU'
         db_engine = create_engine(f"mysql+pymysql://{db_user_name}:{db_pwd}@{db_host}:{port}/{db_name}")
         # 使用 SQLAlchemy 执行 SQL 查询
-        char_list = ['数', "%", "金", "额", "比"]
+        char_list = ['数', "%", "金", "额", "比", "百分比"]
         with db_engine.connect() as connection:
             # for x, y in sql['tables'].items():
             for x in tables:
@@ -160,16 +159,16 @@ def table_info_create():
                         if "DECIMAL" in  v['type'] and any(char in v['comment'] for char in char_list):
                             # 此逻辑筛选单位字段
                             ""
-                            if any(v['comment'].endswith(u) for u in ["数","额"]):
-                                wan.update({k:v['comment']})
-                            else:
+                            if any(v['comment'].endswith(u) for u in ["比"]):
                                 percent.update({k:v['comment']})
+                            else:
+                                wan.update({k:v['comment']})
 
-                    if not project_key and "XM_CODE" in y['fields']:
-                        project_key.append(y['fields']["XM_CODE"]['comment'])
-                        use_key.append("XM_CODE")
-                    if not project_name and "XM_NAME" in y['fields']:
-                        project_name.append(y['fields']["XM_NAME"]['comment'])
+                    if not project_key and "project_code" in y['fields']:
+                        project_key.append(y['fields']["project_code"]['comment'])
+                        use_key.append("project_code")
+                    if not project_name and "project_name" in y['fields']:
+                        project_name.append(y['fields']["project_name"]['comment'])
 
                     is_hj = 0
                     is_sheng = 1 if any(char in table_name for char in ['省级',"本级"]) else 0
@@ -198,21 +197,24 @@ def table_info_create():
 
 
         print(table_info)
-
+        with open('table_info.json', 'w', encoding='utf-8') as f:
+                    json.dump(table_info, f, ensure_ascii=False, indent=4)
+                    
+        print("执行完毕，table_info.json 文件已成功生成！")
 
 def sql_run(table):
     db_user_name = 'hbch'
     db_pwd = 'hbch2711'
     db_host = '192.168.100.160'
     port = 3306
-    db_name = 'RDYS_PUBLIC_TBS'
+    db_name = 'RDYS_PUBLIC_TBS_WU'
     db_engine = create_engine(f"mysql+pymysql://{db_user_name}:{db_pwd}@{db_host}:{port}/{db_name}")
     # 使用 SQLAlchemy 执行 SQL 查询
 
     with db_engine.connect() as connection:
         # 使用 text() 包装 SQL 语句以支持原生 SQL
         sql1 = f"""
-        select DISTINCT XM_NAME, XM_CODE from  {table}
+        select DISTINCT `project_name`, `project_code` from  {table}
         """
         middle = []
         result = connection.execute(text(sql1))
@@ -222,7 +224,8 @@ def sql_run(table):
             val = w[0].strip()
             if " " in val:
                 val = val.replace(" ","")
-            if val =="合计": # 总数 总额 合计 | 修改数据
+            # if val =="合计": # 总数 总额 合计 | 修改数据
+            if "合计" in val:
                 continue
             if "、" in val:
                 middle.append((val.split("、")[1].strip(),key,table,name_dict[table],w[1]))
@@ -232,6 +235,8 @@ def sql_run(table):
                 middle.append((val.strip("#"), key, table, name_dict[table],w[1]))
             elif '\n' in val:
                 middle.append((val.replace("\n","").strip(), key, table, name_dict[table],w[1]))
+            elif "：" in val:
+                middle.append((val.split("：")[1].strip(), key, table, name_dict[table],w[1]))
             else:
                 middle.append((val.strip(), key, table, name_dict[table],w[1]))
     return middle
@@ -305,7 +310,7 @@ def search_next():
             match=MatchValue(value="表描述"))])
     # results = client.search_matrix_pairs(
     results = client.query_points(
-        collection_name="db_words_feng_260304",
+        collection_name="db_words_liu",
         query=query_vector,
         query_filter=search_filter,
         limit=3,
@@ -350,7 +355,6 @@ def main():
     tables = ["RDYS_LD_YSZX_YBGGYS_SBJZCWCQK",
               "RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC",
               "RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC",
-              "RDYS_LD_YSZX_ZFXJJ_QSSRWCQK",
               ]
     client = QdrantClient(host="192.168.100.160", port=6333)
     record = []
@@ -372,7 +376,12 @@ def main():
             }
             record.append(y[0])
             uid = uuid.uuid4().__str__().replace("-", "")
-            id_search(client,uid,y[0],payload,"db_words_feng_260304")
+            id_search(client,uid,y[0],payload,"db_words_liu")
+        set_middle = []
+        for i in middle:
+            set_middle.append(i[0])
+        print(set(set_middle))
+        print(middle)
 
     print(len(set(record)),"插入总长度....")
 
@@ -385,12 +394,11 @@ def run2():
         sql = json.loads(f.read())
         # middle = []
         tables = [
-            "RDYS_LD_YSZX_YBGGYS_SBJZCWCQK",
+                  "RDYS_LD_YSZX_YBGGYS_SBJZCWCQK",
                   "RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC",
                   "RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC",
-                  "RDYS_LD_YSZX_ZFXJJ_QSSRWCQK",
                   ]
-        char_list = ['数',"%","金","额","比"]
+        char_list = ['数',"%","金","额","比","百分比"]
         count = 0
         client = QdrantClient(host="192.168.100.160", port=6333)
         for table_name in tables:
@@ -408,7 +416,7 @@ def run2():
                     }
                     count+=1
                     uid = uuid.uuid4().__str__().replace("-", "")
-                    id_search(client,uid, v['comment'], payload, "db_words_feng_260304")
+                    id_search(client,uid, v['comment'], payload, "db_words_liu")
 
 
 from qdrant_client.models import Filter, FieldCondition, MatchValue
@@ -417,7 +425,7 @@ def search_all():
     client = QdrantClient(host="192.168.100.160", port=6333)
     # 使用 scroll 方法遍历所有符合条件的记录，不返回向量
     result, next_offset = client.scroll(
-        collection_name="db_words_feng_260304",
+        collection_name="db_words_liu",
         scroll_filter=Filter(
             must=[
                 FieldCondition(
@@ -452,7 +460,7 @@ def search_all2():
     client = QdrantClient(host="192.168.100.160", port=6333)
     # 使用 scroll 方法遍历所有符合条件的记录，不返回向量
     result, next_offset = client.scroll(
-        collection_name="db_words_feng_260304",
+        collection_name="db_words_liu",
         scroll_filter=Filter(
             must=[
                 FieldCondition(
@@ -467,7 +475,7 @@ def search_all2():
     )
 
     # 打印结果
-    with open('col_words.txt','w',encoding='utf-8') as f:
+    with open('col_words.txt', 'w', encoding='utf-8') as f:
         for point in result:
             f.write(point.payload['words']+'\n')
     # end = []
@@ -501,29 +509,28 @@ def run3():
     """
     tb3 = """
     表名：预算执行-省本级一般公共预算支出完成情况表
-    适用场景：查询省本级各预算科目在指定年月的省本级支出执行情况。
+    适用场景：查询省本级各支出预算科目在指定年月的省本级支出执行情况。
     支持科目：援助其他地区支出,科学技术支出,教育支出,其他支出,债务付息支出,自然资源海洋气象等支出,文化旅游体育与传媒支出,节能环保支出,国防支出,农林水支出,卫生健康支出,一般公共服务支出,债务发行费用支出,商业服务业等支出,住房保障支出,灾害防治及应急管理支出,社会保障和就业支出,粮油物资储备支出,资源勘探工业信息等支出,公共安全支出,城乡社区支出,交通运输支出,金融支出,资源勘探信息等支出
     支持指标：
         1.当月维度：预算数、本月实际金额、上年同月数、同比增减额及百分比。
         2.累计维度（本年截至当月）：累计实际金额、上年同期累计数、累计同比增减额及百分比、累计预算完成率。
      **注意**：此表仅包含“省本级一般公共预算支出”数据
     """
-    tb4 = """
-    表名：预算执行-全省政府性基金预算收入完成情况表
-    适用场景：查询全省政府性基金各科目在指定年月的收入执行情况。
-    支持科目：污水处理费,彩票公益金收入,农业土地开发资金收入,其他政府性基金收入,彩票发行机构和彩票销售机构的业务费用,国有土地使用权出让收入,车辆通行费收入,专项债务对应项目专项收入,国有土地收益基金收入,城市基础设施配套费收入,小型水库移民扶助基金收入,国家电影事业发展专项资金收入
-    支持指标：
-        1.当月维度：预算数、本月实际金额、上年同月数、同比增减额及百分比。
-        2.累计维度（本年截至当月）：累计金额、上年同期累计数、累计同比增减额及百分比、累计预算完成率。
-     **注意**：此表仅包含“全省政府性基金收入”数据
-    """
+    # tb4 = """
+    # 表名：预算执行-全省政府性基金预算收入完成情况表
+    # 适用场景：查询全省政府性基金各科目在指定年月的收入执行情况。
+    # 支持科目：污水处理费,彩票公益金收入,农业土地开发资金收入,其他政府性基金收入,彩票发行机构和彩票销售机构的业务费用,国有土地使用权出让收入,车辆通行费收入,专项债务对应项目专项收入,国有土地收益基金收入,城市基础设施配套费收入,小型水库移民扶助基金收入,国家电影事业发展专项资金收入
+    # 支持指标：
+    #     1.当月维度：预算数、本月实际金额、上年同月数、同比增减额及百分比。
+    #     2.累计维度（本年截至当月）：累计金额、上年同期累计数、累计同比增减额及百分比、累计预算完成率。
+    #  **注意**：此表仅包含“全省政府性基金收入”数据
+    # """
     # 将表的描述内容也存入向量数据库
     client = QdrantClient(host="192.168.100.160", port=6333)
-    data = [tb1, tb2, tb3, tb4]
+    data = [tb1, tb2, tb3]
     tables = ["RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC",
               "RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC",
               "RDYS_LD_YSZX_YBGGYS_SBJZCWCQK",
-              "RDYS_LD_YSZX_ZFXJJ_QSSRWCQK",
               ]
     for n,x in enumerate(data):
         payload = {
@@ -544,7 +551,7 @@ def run3():
             payload=payload
         )
         client.upsert(
-            collection_name='db_words_feng_260304',
+            collection_name='db_words_liu',
             points=[point_to_upsert]
         )
 
@@ -565,27 +572,27 @@ def create1(collection_name):
     client.close()
 
 
-def del_many():
-    client = QdrantClient(host="192.168.100.160", port=6333)
-    # 定义过滤条件：删除所有 cate='news' 且 words='old_topic' 的数据
-    delete_filter = Filter(
-        must=[
-            FieldCondition(
-                key="cate",
-                match=MatchValue(value="科目/项目")
-            )
+# def del_many():
+#     client = QdrantClient(host="192.168.100.160", port=6333)
+#     # 定义过滤条件：删除所有 cate='news' 且 words='old_topic' 的数据
+#     delete_filter = Filter(
+#         must=[
+#             FieldCondition(
+#                 key="cate",
+#                 match=MatchValue(value="科目/项目")
+#             )
 
-        ]
-    )
+#         ]
+#     )
 
-    # 执行条件删除
-    response = client.delete(
-        collection_name="db_words_feng_260304",
-        points_selector=delete_filter,  # 这里传入 Filter 对象而不是 ID 列表
-        wait=True
-    )
+#     # 执行条件删除
+#     response = client.delete(
+#         collection_name="db_words_liu",
+#         points_selector=delete_filter,  # 这里传入 Filter 对象而不是 ID 列表
+#         wait=True
+#     )
 
-    print(f"删除状态: {response.status}")
+#     print(f"删除状态: {response.status}")
 
 
 def level2_insert(path):
@@ -663,14 +670,14 @@ def level2_insert(path):
 if __name__ == '__main__':
     # search_next()
     # search_all2()
-    # **run3()
-    # schema_run('RDYS_LD_YSZX_ZFXJJ_QSSRWCQK')
+
+    # schema_run('RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC')
     # level2_insert('final_table_xm.json')
-    # del_many()
-    # **run2()
-    # create1('db_words_feng_260304')
-    # **main()
-    # search_all()
+    # del_many(),,,,,
     # level2_insert('final_table_xm.json')
     table_info_create()
+    # main()
+    # run2()
+    # run3()
+
 # ['RG_CODE', 'RG_NAME', 'XH', 'DATE_YEAR', 'DEPT_NAME', 'DATA_ID', 'DEPT_CODE'] 所有表都包含的字段

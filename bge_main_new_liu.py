@@ -2,33 +2,31 @@ import datetime
 import random
 import time
 import re
-from echarts import Echart, Legend, Bar, Line, Axis, Tooltip, Pie
+
+import requests
+# from echarts import Echart, Legend, Bar, Line, Axis, Tooltip, Pie
+from pyecharts.charts import Bar, Line, Pie
+from pyecharts import options as opts
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.params import Body, Form
 from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Filter, FieldCondition, MatchValue, MatchAny
-from sentence_transformers import SentenceTransformer, CrossEncoder
-import torch
 import json
 from starlette.middleware.cors import CORSMiddleware
-from modelscope import AutoModelForCausalLM, AutoTokenizer
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-import traceback
 from sqlalchemy import create_engine
 import ahocorasick
 import redis
 from collections import defaultdict
-# import redis.asyncio as redis
-# pip install pyahocorasick
 
 import collections
 from typing import List, Dict, Optional, Tuple, Any
 
 from starlette.responses import StreamingResponse, JSONResponse
 
-BASE_URL = "http://192.168.100.160:8989/"
+BASE_URL = "http://192.168.100.160:8991"
 api_config = {
     "api_key": "sk-d507bd835e174d99b57757f3010dfd02",
     "base_url": "https://api.deepseek.com",
@@ -39,6 +37,29 @@ api_config = {
     "timeout": 60,
 
 }
+def get_embedding1(text_list):
+    url = f"{BASE_URL}/embed"
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, headers=headers, json=text_list)
+    return response.json()
+
+
+def get_text2sql(question,demo,evidence):
+    try:
+        data = requests.post(url=f"{BASE_URL}/text2sql",
+                            json={"question": question, "demo": json.dumps(demo), "evidence": evidence},
+                            timeout=30
+                            )
+        ret = data.json()
+        print("text2sql->",ret)
+    except BaseException as e:
+        ret = {"status":"error", "message": str(e)}
+
+    return ret
 
 
 class Text2SQLTableRanker:
@@ -71,7 +92,7 @@ class Text2SQLTableRanker:
             t_name = item['table']
             source = item['source']
             score = float(item['score'])
-            temp_store[t_name][source].append(score)
+            temp_store[t_name][source].append(score)    #temp_store[表名][来源] = [分数1, 分数2, 分数3...]
 
         aggregated = {}
         for t_name, sources in temp_store.items():
@@ -162,6 +183,7 @@ class Text2SQLTableRanker:
                 'all_candidates': results
             }
         # 规则3：top1和top2过近，说明区分度不足
+        # TODO：兜底策略，未实现，当前几个得分最高的表得分相近时的情况，后续要用到（候选差距阈值self.min_score_gap = 0.03和self.min_desc_gap = 0.05）
         if len(results) > 1:
             if best_match['final_score'] < self.min_confidence:
                 return {
@@ -225,14 +247,14 @@ db_user_name = 'hbch'
 db_pwd = 'hbch2711'
 db_host = '192.168.100.160'
 port = 3306
-db_name = 'RDYS_PUBLIC_TBS'
+db_name = 'RDYS_PUBLIC_TBS_WU'
 db_engine = create_engine(f"mysql+pymysql://{db_user_name}:{db_pwd}@{db_host}:{port}/{db_name}")
 
 
 @app.on_event("startup")
 async def load_models():
     app.state.redis = redis.Redis(
-        host="localhost",
+        host="127.0.0.1",
         port=6379,
         db=11,
         encoding="utf-8",
@@ -240,7 +262,7 @@ async def load_models():
 
     )  # password=REDIS_PASS
 
-    with open('RDYS_PUBLIC_TBS_only10.json', 'r', encoding='utf-8') as f:
+    with open('text2sql_project/RDYS_PUBLIC_TBS_WU.json', 'r', encoding='utf-8') as f:
         data = json.load(f)
         table_dict2 = {}
 
@@ -252,25 +274,6 @@ async def load_models():
 
             }})
     app.state.public_data = table_dict2
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"加载 embedding 模型...{device}")
-    app.state.embedding_model = SentenceTransformer(
-        '/mnt/feng/models/bge-m3',
-        device=device
-    )
-    app.state.embedding_model.eval()
-
-    # 加载 rerank 模型
-    app.state.rerank_model = CrossEncoder(
-        '/mnt/feng/models/bge-rerank',
-        device=device
-    )
-    local_path = '/mnt/feng/models/xiyan3b'
-    app.state.sql_model = AutoModelForCausalLM.from_pretrained(
-        local_path,
-        torch_dtype=torch.bfloat16,
-        device_map="auto"
-    )
     app.state.chat = OpenAI(
         api_key=api_config["api_key"],
         base_url=api_config["base_url"],
@@ -278,16 +281,15 @@ async def load_models():
         timeout=60
     )
 
-    app.state.sql_tokenizer = AutoTokenizer.from_pretrained(local_path)
-
-    with open('table_info.json', 'r', encoding='utf-8') as f4:
+    # TODO: 表描述 table_info.json未出现此文件
+    with open('text2sql_project/table_info.json', 'r', encoding='utf-8') as f4:
         app.state.use_table_info = json.load(f4)
 
-    with open('project_words.txt', 'r', encoding='utf-8') as f2:
+    with open('text2sql_project/project_words.txt', 'r', encoding='utf-8') as f2:
         word_list = [x.strip() for x in f2.readlines()]
-    with open('col_words.txt', 'r', encoding='utf-8') as f3:
+    with open('text2sql_project/col_words.txt', 'r', encoding='utf-8') as f3:
         col_word_list = [x.strip() for x in f3.readlines()]
-    app.state.collection_name = "all_data_test_0317"  # all_data_test_0317 db_words_feng_260304
+    app.state.collection_name = "db_words_wu"  # all_data_test_0317 db_words_feng_260304
     app.state.words_match = KeywordMatcher(word_list)
     app.state.col_match = KeywordMatcher(col_word_list)
     app.state.zone_dict = {'河北省': '130000000', '河北省本级': '130000000', '邢台市': '130500000',
@@ -299,7 +301,7 @@ async def load_models():
                            '滦南县': '130224000', '临城县': '130522000'}
     app.state.zone_match = KeywordMatcher(list(app.state.zone_dict.keys()))
 
-    app.state.client = QdrantClient(host="192.168.100.160", port=6333)
+    app.state.client = QdrantClient(host="192.168.100.160", port=6333,timeout = 60)
     app.state.nl2sqlite_template_cn = """你是一名{dialect}专家，现在需要阅读并理解下面的【数据库schema】描述，以及可能用到的【参考信息】，并运用{dialect}知识生成sql语句回答【用户问题】。
                             【约束规则】
                              1.查询结果中筛选列不可缺失。即生成的sql的检索结果必须带上检索的日期维度或者地区维度。
@@ -543,8 +545,7 @@ async def load_models():
 
 ## 规则
 
-### 1）区划编码、项目编码
-- 区划编码直接使用输入提供的值，不提取、不改写。
+### 1）项目编码
 - 项目编码直接使用输入提供的值，不提取、不改写。
 - 最终输出中：
   - 若项目编码非空，写“项目编码为【项目编码】”
@@ -701,7 +702,7 @@ async def load_models():
 ---
 
 ### 8）输出格式（严格遵守）
-在【实际时间范围】内，查询区划编码为【区划编码】且项目编码为【项目编码】的【查询相关列】数据。  
+在【实际时间范围】内，查询项目编码为【项目编码】的【查询相关列】数据。  
 查询类型为：【核心意图】。  
 结果中返回以下字段或指标：【指标列表】。  
 【如存在分组维度，则补充：按【分组维度】统计。】  
@@ -782,169 +783,6 @@ async def shutdown():
     app.state.redis.close()
 
 
-@app.post("/embed", summary='embedding模型接口-bge-m3 1024维度')
-async def embed(texts: list[str]):
-    model = app.state.embedding_model
-    with torch.no_grad():
-        embeddings = model.encode(texts, convert_to_tensor=True)
-    return {"embeddings": embeddings.cpu().numpy().tolist()}
-
-
-@app.post("/rerank", summary='rerank模型接口')
-async def rerank(query: str, documents: list[str]):
-    model = app.state.rerank_model
-    scores = model.predict([(query, doc) for doc in documents])
-    ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-    ranked_documents = [documents[i] for i in ranked_indices]
-    ranked_scores = [float(scores[i]) for i in ranked_indices]
-    return {
-        "ranked_documents": ranked_documents,
-        "scores": ranked_scores
-    }
-
-
-@app.post("/table_info", summary="人大表结构信息查询：不传table_name时默认返回所有表的粗略信息,传中文名称时返回具体信息")
-async def table_info(table_name: str = None):
-    if table_name not in app.state.public_data:
-        res = []
-        for x, y in app.state.public_data.items():
-            tables = y['tables']
-            t_name, t_info = "", {}
-            for k, v in tables.items():
-                t_name = k
-                t_info = v
-            res.append({
-                "表名：": x,
-                "英文表名：": t_name,
-                "列数": len(t_info['fields']),
-            })
-        return res
-    else:
-        data = app.state.public_data[table_name]['tables']
-
-        t_name, t_info = "", {}
-        for k, v in data.items():
-            t_name = k
-            t_info = v
-        res = {
-            "表名": table_name,
-            "英文表名：": t_name,
-            "表信息：": t_info,
-        }
-
-        return res
-
-
-@app.post("/sql2")
-async def sql2(question: str, table_name: str = None, evidence: str = ""):
-    if table_name not in app.state.public_data:
-        tables_list = [k for k in app.state.public_data.keys()]
-        scores = app.state.rerank_model.predict([(question, doc) for doc in tables_list])
-        ranked_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-        ranked_documents = [tables_list[i] for i in ranked_indices]
-        ranked_scores = [float(scores[i]) for i in ranked_indices]
-        desc_info = f"表名：{ranked_documents[0]}-相关度：{ranked_scores[0]}"
-        print(desc_info)
-        demo = app.state.public_data[ranked_documents[0]]
-
-    else:
-        desc_info = f"指定表名：{table_name}"
-        demo = app.state.public_data[table_name]
-    # demo只会选中一张表，因为后续要根据这张表去进行sql优化
-    ## dialects -> ['SQLite', 'PostgreSQL', 'MySQL']
-    prompt = app.state.nl2sqlite_template_cn.format(
-        dialect="MySQL", db_schema=demo,
-        question=question, evidence=evidence)
-    message = [{'role': 'user', 'content': prompt}]
-
-    sss = app.state.sql_tokenizer.apply_chat_template(
-        message,
-        tokenize=False,
-        add_generation_prompt=True
-    )
-    model_inputs = app.state.sql_tokenizer([sss], return_tensors="pt").to(app.state.sql_model.device)
-
-    generated_ids = app.state.sql_model.generate(
-        **model_inputs,
-        pad_token_id=app.state.sql_tokenizer.pad_token_id,
-        eos_token_id=app.state.sql_tokenizer.eos_token_id,
-        max_new_tokens=1024,
-        temperature=0.1,
-        top_p=0.8,
-        do_sample=True,
-    )
-    generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-    ]
-    sql_query = app.state.sql_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-    # 优化sql生成过程不带符号的问题
-    try:
-        table_data_col = list(demo['tables'].values())[0]['fields'].keys()
-    except:
-        table_data_col = None
-        print("没有找到table_data_col。。。")
-    if table_data_col:
-        for u in table_data_col:
-            if u + ' ' in sql_query and f"`{u}` " not in sql_query:
-                sql_query = sql_query.replace(u + ' ', f"`{u}` ")
-            if u + ',' in sql_query and f"`{u}`," not in sql_query:
-                sql_query = sql_query.replace(u + ',', f"`{u}`,")
-            if u + ';' in sql_query and f"`{u}`;" not in sql_query:
-                sql_query = sql_query.replace(u + ';', f"`{u}`;")
-
-    try:
-        # 使用 SQLAlchemy 执行 SQL 查询
-        with db_engine.connect() as connection:
-            # 使用 text() 包装 SQL 语句以支持原生 SQL
-            result = connection.execute(text(sql_query))
-
-            # 如果是查询语句（SELECT），获取结果
-            if sql_query.strip().upper().startswith('SELECT'):
-                # 获取列名
-                columns = result.keys()
-
-                # 获取所有行数据
-                rows = []
-                for row in result:
-                    # 将 Row 对象转换为字典
-                    row_dict = {}
-                    for i, column in enumerate(columns):
-                        row_dict[column] = row[i]
-                    rows.append(row_dict)
-
-                return {
-                    "success": True,
-                    "desc_info": desc_info,
-                    "data": rows,
-                    "columns": list(columns),
-                    "row_count": len(rows),
-                    "sql_query": sql_query,
-                    "message": "SQL 查询执行成功"
-                }
-
-
-    except SQLAlchemyError as e:
-        # 捕获 SQLAlchemy 相关错误
-        error_msg = str(e.__cause__) if e.__cause__ else str(e)
-        return {
-            "success": False,
-            "desc_info": desc_info,
-            "error_type": "SQLAlchemyError",
-            "error_message": error_msg,
-            "sql_query": sql_query
-        }
-    except Exception as e:
-        # 捕获其他异常
-        return {
-            "success": False,
-            "desc_info": desc_info,
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-            "sql_query": sql_query,
-            "traceback": traceback.format_exc()
-        }
-
-
 def wait_info(search_point, check_sheng, use_table_info, source):
     wait_tables = []
     for x in search_point.points:
@@ -959,62 +797,6 @@ def wait_info(search_point, check_sheng, use_table_info, source):
     return wait_tables
 
 
-@app.post("/model_chat_test")
-def model_chat_test(question: str, name: str, data1: dict, data2: dict):
-    prompt = f"""
-        # Role
-    你是一名专业的 Text-to-SQL 语义解析助手。你的任务是根据用户原始自然语言问题，结合提供的数据库 schema 映射信息，将问题重写为逻辑清晰、术语精确的“优化后问题”。
-
-    # Input Data
-    1. **用户原始问题**: 2025年1月河北省教育和其他支出的预算是多少？
-    2.**使用名称**:项目名称
-    3. **名称映射表** (用户词汇 -> 数据库实际值):
-    {{"教育": "教育支出", "其他支出": "其他支出"}}
-    4. **列名映射表** (用户词汇 -> 数据库实际列名):
-    {{"预算": "预算数"}}
-
-    # Constraints & Rules
-    1. **术语替换**: 必须严格使用【使用名称】、【名称映射表】和【列名映射表】中的“数据库实际值/列名”替换用户问题中的对应口语化词汇。
-    2. **逻辑保留**: 保持原问题的时间、地点、筛选条件（如“和”、“或”）及查询意图不变。
-    3. **句式规范**: 优化后的问题应是一个完整的陈述句或疑问句，结构通常为：“[时间][地点]项目名称为[具体项目值]的[具体列名]是多少？”
-    4. **无多余输出**: 最终输出**仅包含**优化后的问题文本，不要包含任何解释、前缀（如“优化结果：”）或标点符号以外的字符。
-
-    # Few-Shot Example
-    **输入**:
-    - 用户原始问题: 2025年1月河北省教育和其他支出的预算是多少？
-
-    - 项目名称映射表: {{"教育": "教育支出", "其他支出": "其他支出"}}
-    - 列名映射表: {{"预算": "预算数"}}
-
-    **输出**:
-    2025年1月河北省项目名称为教育支出和其他支出的预算数是多少？
-
-    # Execution
-    请根据上述规则处理以下输入：
-
-    **输入**:
-    - 用户原始问题: {question}
-    - 使用名称：{name}
-    - 名称映射表: {data1}
-    - 列名映射表: {data2}
-    **输出**:
-        """
-    new_message = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": question},
-    ]
-    create_params = {
-        "model": "deepseek-chat",
-        "messages": new_message,
-        "temperature": 0.7,
-        "max_tokens": 8192,
-        "stream": False,
-        "timeout": api_config["timeout"]
-    }
-    # params_copy["extra_body"] = {"thinking": {"type": "disabled"}}
-    response = app.state.chat.chat.completions.create(**create_params)
-    ret = response.choices[0].message.content
-    return ret
 
 
 def model_chat(chat, question, prompt):
@@ -1059,187 +841,179 @@ def create_image(categories, values, title, y_titles):
         '#D9A7E0',  # 薰衣草紫
         '#A8D5E5'  # 浅天蓝
     ]
-    chart = Echart(title)
+    # chart = Echart(title)
+    # 初始化图表
+    chart = (
+        Bar(init_opts=opts.InitOpts(width="100%", height="600px"))
+        if any("bar" in v for v in values)
+        else Line(init_opts=opts.InitOpts(width="100%", height="600px"))
+        if any("line" in v for v in values)
+        else Pie(init_opts=opts.InitOpts(width="100%", height="600px"))
+    )
+
+    # 设置标题
+    chart.set_global_opts(
+        title_opts=opts.TitleOpts(
+            title=title,
+            bottom=0,
+            left="center"
+        )
+    )
+
     use_tip = None
-    use_lg = None
     is_xy = True
 
     def get_unit(text):
         match = re.search(r'（(.*?)）', text)
-        if match:
-            return match.group(1)
-        else:
-            return ""
+        return match.group(1) if match else ""
 
+    # 循环添加系列
     for n, x in enumerate(values):
+        if not chart_colors:
+            chart_colors = [
+                '#5470C6', '#91CC75', '#EE6666', '#FAC858', '#73C0DE'
+            ]
+        color = random.choice(chart_colors)
+        chart_colors.remove(color)
+
         if "bar" in x:
-            use_lg = Legend(
-                data=y_titles,
-                left='center',
-                top=20,  # 距离顶部20像素
-                textStyle={'fontSize': 12}
+            chart.add_yaxis(
+                series_name=y_titles[n],
+                y_axis=x["bar"],
+                itemstyle_opts=opts.ItemStyleOpts(color=color),
             )
-            color = random.choice(chart_colors)
-            chart_colors.remove(color)
-            chart.use(Bar(
-                name=y_titles[n],
-                data=x['bar'],
-                itemStyle={'color': color},
-                # barWidth=40  # 柱宽（注意：使用关键字参数 barWidth）
-            ))
+
         elif "line" in x:
-            use_lg = Legend(
-                data=y_titles,
-                left='center',
-                top=20,  # 距离顶部20像素
-                textStyle={'fontSize': 12}
+            chart.add_yaxis(
+                series_name=y_titles[n],
+                y_axis=x["line"],
+                linestyle_opts=opts.LineStyleOpts(width=2, color=color),
+                itemstyle_opts=opts.ItemStyleOpts(color=color),
+                symbol="circle",
+                symbol_size=8,
+                is_smooth=True,
             )
-            color = random.choice(chart_colors)
-            chart_colors.remove(color)
-            chart.use(Line(
-                name=y_titles[n],
-                data=x['line'],
-                smooth=True,
-                lineStyle={'width': 2, 'color': color},
-                itemStyle={'color': color},
-                symbol='circle',
-                symbolSize=8
-            ))
+
         elif "pie" in x:
             is_xy = False
-            use_tip = Tooltip(trigger='item', formatter='{a}<br/>{b}: {c}')
-            use_lg = Legend(
-                data=categories,
-                # orient='vertical',  # 垂直排列 vertical
-                # left='70%',  # 距离容器左侧 70% 处（右侧区域）
-                # top='center',  # 垂直居中
-                itemGap=12,  # 图例项之间的间距
-                textStyle={'fontSize': 12}
+            pie_data = [
+                opts.PieItem(name=categories[i], value=val)
+                for i, val in enumerate(x["pie"])
+            ]
+            chart = Pie(init_opts=opts.InitOpts(width="100%", height="600px"))
+            chart.add(
+                series_name=y_titles[n],
+                data_pie=pie_data,
+                radius="55%",
+                center=["50%", "60%"],
+                label_opts=opts.LabelOpts(
+                    formatter="{b}:{d}%",
+                    position="outside",
+                ),
             )
-            chart.use(Pie(
-                name=y_titles[n],
-                data=[{"name": categories[n], "value": i} for n, i in enumerate(x['pie'])],
-                radius='55%',  # 饼图半径（相对容器宽度的一半）
-                center=['50%', '60%'],  # 饼图中心位置
-                label={
-                    'show': True,
-                    'position': 'outside',
-                    'formatter': '{b}:{d}%',  # 显示名称和百分比
-                    'alignTo': 'labelLine',  # 标签与引导线对齐
-                    'bleedMargin': 10
-                },
-                labelLine={  # 引导线样式
-                    'length': 10,
-                    'length2': 10,
-                    'smooth': True
-                }
-            ))
+            chart.set_global_opts(
+                legend_opts=opts.LegendOpts(
+                    item_gap=12,
+                    textstyle_opts=opts.TextStyleOpts(font_size=12),
+                ),
+                tooltip_opts=opts.TooltipOpts(
+                    trigger="item",
+                    formatter="{a}<br/>{b}: {c}"
+                ),
+                title_opts=opts.TitleOpts(title=title, bottom=0, left="center"),
+            )
 
-    # ---- 5. X 轴（带网格线） ----
-    chart.use(use_lg)
-    # formatter = '{b}<br/>{a0}: {c0}万元<br/>{a1}: {c1}%'
-    unit_list = []
+    # ==================== XY 轴图表（柱状/折线）====================
     if is_xy:
-        # 根据y轴数量动态生成
+        chart.add_xaxis(categories)
+        unit_list = []
+        tip_formatter = ""
+
         if len(y_titles) <= 1:
-            tip_formatter = 'x轴:{b}<br/>{a}: {c}' + get_unit(y_titles[0])
-            unit_list.append(get_unit(y_titles[0]))
+            unit = get_unit(y_titles[0])
+            tip_formatter = f"x轴:{{b}}<br/>{{a}}: {{c}}{unit}"
+            unit_list.append(unit)
         else:
-            tip_formatter = 'x轴:{b}<br/>'
-            for index, u in enumerate(y_titles):
-                unit_list.append(get_unit(u))
-                tip_formatter += '{a' + str(index) + '}: {c' + str(index) + '}' + get_unit(u)
-                if index != len(y_titles) - 1:
-                    tip_formatter += '<br/>'
+            tip_formatter = "x轴:{b}<br/>"
+            for i, y in enumerate(y_titles):
+                u = get_unit(y)
+                unit_list.append(u)
+                tip_formatter += f"{{a{i}}}: {{c{i}}}{u}"
+                if i != len(y_titles) - 1:
+                    tip_formatter += "<br/>"
 
-        use_tip = Tooltip(
-            trigger='axis',
-            formatter=tip_formatter,
-            backgroundColor='rgba(50,50,50,0.9)',
-            textStyle={'color': '#fff'},
-            borderColor='#333',
-            borderWidth=1
+        chart.set_global_opts(
+            tooltip_opts=opts.TooltipOpts(
+                trigger="axis",
+                formatter=tip_formatter,
+                background_color="rgba(50,50,50,0.9)",
+                textstyle_opts=opts.TextStyleOpts(color="#fff"),
+                border_color="#333",
+                border_width=1,
+            ),
+            legend_opts=opts.LegendOpts(
+                left="center",
+                top=20,
+                textstyle_opts=opts.TextStyleOpts(font_size=12),
+            ),
+            xaxis_opts=opts.AxisOpts(
+                type_="category",
+                splitline_opts=opts.SplitLineOpts(
+                    is_show=True, linestyle_opts=opts.LineStyleOpts(type_="dashed", color="#eee")
+                ),
+            ),
+            yaxis_opts=opts.AxisOpts(
+                type_="value",
+                name="数值",
+                name_location="end",
+                name_gap=15,
+                splitline_opts=opts.SplitLineOpts(
+                    is_show=True, linestyle_opts=opts.LineStyleOpts(type_="dashed", color="#eee")
+                ),
+            ),
         )
-        chart.use(Axis(
-            type='category',
-            position='bottom',
-            data=categories,
-            min=0,
-            # name='数值',  # 轴名称
-            nameLocation='middle',  # 名称显示在中间
-            nameGap=25,  # 距离轴线 25 像素
-            nameTextStyle={'fontSize': 14, 'fontWeight': 'bold'},  # 文字样式
-            axisTick={'alignWithLabel': True},
-            splitLine={'show': True, 'lineStyle': {'color': ['#eee'], 'type': 'dashed'}}
-        ))
 
-        # Y 轴（数值轴）添加名称和单位
-        chart.use(Axis(
-            type='value',
-            position='left',
-            name='数值',  # 轴名称（可包含单位）
-            min=0,
-            nameLocation='end',  # 显示在轴末端
-            nameGap=15,
-            splitLine={'show': True, 'lineStyle': {'color': ['#eee'], 'type': 'dashed'}}
-        ))
+        # 双 Y 轴（万元 + %）
+        unique_units = set(u for u in unit_list if u)
+        if len(unique_units) > 1 and "%" in unit_list:
+            money_values = []
+            percent_values = []
+            for i, y in enumerate(unit_list):
+                vals = list(values[i].values())[0]
+                if y == "万元":
+                    money_values.extend(vals)
+                elif y == "%":
+                    percent_values.extend(vals)
 
-    chart.use(use_tip)
-    config = chart.json
+            if money_values:
+                max_m = max(money_values)
+                min_m = min(money_values)
+                chart.options["yAxis"][0]["min"] = 0
+                chart.options["yAxis"][0]["max"] = max_m * 1.1
+
+            if percent_values:
+                max_p = max(percent_values)
+                min_p = min(percent_values)
+                chart.options["yAxis"].append({
+                    "type": "value",
+                    "position": "right",
+                    "name": "百分比 (%)",
+                    "nameLocation": "end",
+                    "min": min_p * 0.9,
+                    "max": max_p * 1.1,
+                    "axisLabel": {"formatter": "{value} %"},
+                    "splitLine": {"show": False},
+                })
+
+                for i, u in enumerate(unit_list):
+                    if u == "%":
+                        if "series" in chart.options:
+                            chart.options["series"][i]["yAxisIndex"] = 1
+
+    # 最终返回配置（和你原来用法完全一样！）
+    config = chart.dump_options()
     if isinstance(config, str):
-        config = json.loads(config)  # 如果是字符串，解析为字典
-
-    # 将标题放置在最下方（距离底部20像素，水平居中）
-    config['title']['bottom'] = 0
-    config['title']['left'] = 'center'  # 保持居中
-    if not is_xy:
-        config.pop('xAxis', None)
-        config.pop('yAxis', None)
-    else:
-        unique_units = set([i for i in unit_list if i])
-        money_all_values = []
-        for n, y in enumerate(unit_list):
-            if y == '万元':
-                money_all_values.extend(list(values[n].values())[0])
-
-        money_max_val = max(money_all_values)
-        money_min_val = min(money_all_values)
-        money_range_val = money_max_val - money_min_val
-        if money_max_val < 0 and money_min_val < 0:
-            money_min_axis = money_min_val - 0.1 * money_range_val
-            money_max_axis = 0
-        elif money_max_val > 0 and money_min_val > 0:
-            money_min_axis = 0
-            money_max_axis = money_max_val + 0.1 * money_range_val
-        else:
-            money_min_axis = money_min_val - 0.1 * money_range_val
-            money_max_axis = money_max_val + 0.1 * money_range_val
-        print('money_min_axis', money_min_axis, money_max_axis)
-        config['yAxis'][0]['min'] = money_min_axis
-        config['yAxis'][0]['max'] = money_max_axis
-        if len(unique_units) > 1 and '%' in unit_list:
-            percent_all_values = []
-            for n, y in enumerate(unit_list):
-                if y == '%':
-                    percent_all_values.extend(list(values[n].values())[0])
-                    if 'series' in config and len(config['series']) > 1:
-                        config['series'][n]['yAxisIndex'] = 1
-            max_val = max(percent_all_values)
-            min_val = min(percent_all_values)
-            range_val = max_val - min_val
-            min_axis = min_val - 0.1 * range_val
-            max_axis = max_val + 0.1 * range_val
-            config['yAxis'].append({
-                'type': 'value',
-                'position': 'right',
-                'name': '百分比 (%)',
-                'nameLocation': 'end',
-                'min': min_axis,  # 留出负值空间
-                'max': max_axis,
-                'axisLabel': {'formatter': '{value} %'},
-                'splitLine': {'show': False}  # 可选：隐藏右侧网格线，避免重叠
-            })
-
+        config = json.loads(config)
     return config
 
 
@@ -1370,7 +1144,7 @@ def ensure_year_month_in_select(sql: str, sss) -> str:
     return new_sql + ';'
 
 
-def ret_format(msg):
+def ret_format(msg,stop=None):
     return json.dumps({
         "id": f"chatcmpl-{int(time.time())}",
         "object": "chat.completion.chunk",
@@ -1381,7 +1155,7 @@ def ret_format(msg):
             "delta": {
                 "content": msg
             },
-            "finish_reason": None
+            "finish_reason": stop
         }]
     }) + "\n\n"
 
@@ -1548,20 +1322,7 @@ def creat_image_data(data, x_axis_label, question, app):
     finally:
         app.state.redis.delete(question.strip() + "_task_cache")
 
-
-def get_agg_name(x):
-    all_dd = {"COUNT": "计数", "SUM": "求和", "AVG": "平均值", "MIN": "最小值", "MAX": "最大值"}
-    ret = ""
-    for w, y in all_dd.items():
-        if w in x:
-            ret = y
-            break
-    else:
-        ret = ""
-    return ret
-
-
-def check_select_col(col_dict, select_list):
+def check_select_col(col_dict,select_list):
     check = []
     for x in select_list:
         if "(" in x:
@@ -1574,6 +1335,17 @@ def check_select_col(col_dict, select_list):
             check.append(x in col_dict)
     return all(check)
 
+
+def get_agg_name(x):
+    all_dd = {"COUNT": "计数", "SUM": "求和", "AVG": "平均值", "MIN": "最小值", "MAX": "最大值"}
+    ret = ""
+    for w,y in all_dd.items():
+        if w in x:
+            ret = y
+            break
+    else:
+        ret = ""
+    return  ret
 
 @app.post("/v1/chat/completions")
 async def sql3(request: Request, background_tasks: BackgroundTasks):
@@ -1668,10 +1440,11 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
 
             wait_tables.extend(wait_info(existing_points, check_sheng, app.state.use_table_info, source="项目匹配"))
         yield ret_format(f"已找到{len(project_words)}个关键词，分别为{','.join(project_words)}\n\n")
-
-        with torch.no_grad():
-            embedding = app.state.embedding_model.encode([question], convert_to_tensor=True)
-            query_vector = embedding.cpu().numpy().tolist()[0]
+        try:
+            query_vector = get_embedding1([question])['embeddings'][0]
+        except:
+            yield ret_format("模型服务异常，请联系管理员维护！",stop="stop")
+            return
         search_filter = Filter(
             must=[FieldCondition(
                 key="cate",
@@ -1762,7 +1535,8 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
             if zone_words:
                 region_value = "、".join(set([app.state.zone_dict.get(i, "130000000") for i in zone_words]))
             else:
-                region_value = "130000000"  # 区域code
+                # region_value = "130000000"  # 区域code
+                region_value = ""  # 区域code
 
             if question_words:
                 print(data1.get(table_name, []), "项目字典....")
@@ -1823,39 +1597,20 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
 
             en_table_name = app.state.use_table_info[table_name]['table']
             col_name_dict = {k: v['comment'] for k, v in demo['tables'][en_table_name]['fields'].items()}
-
+            # TODO:优化evidence 为列映射和模式说明
             evidence = """
                question：2025年12月项目名称为个人所得税的预算数是多少？
                answer: SELECT `YEAR_MONTH`,`YSS`  FROM `RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC` WHERE `YEAR_MONTH` = '202512' AND `XM_NAME` = '个人所得税';
                question：2025年2月到2025年10月期间科目编码为205的本月金额分别是多少？
                answer:SELECT `YEAR_MONTH`,`BYS_JE` FROM RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC WHERE `YEAR_MONTH` BETWEEN '202502' AND '202510' AND `XM_CODE` = '205'  ORDER BY XH;
                """
-            ## dialects -> ['SQLite', 'PostgreSQL', 'MySQL']
-            prompt = app.state.nl2sqlite_template_cn.format(
-                dialect="MySQL", db_schema=demo,
-                question=new_question, evidence=evidence)
-            message = [{'role': 'user', 'content': prompt}]
+            sql_query_json = get_text2sql(new_question, demo, evidence)
+            if sql_query_json['status']=='success':
+                sql_query = sql_query_json['sql_query']
+            else:
+                yield ret_format(f"模型服务异常，请联系管理员！",stop="stop")
+                return
 
-            sss = app.state.sql_tokenizer.apply_chat_template(
-                message,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            model_inputs = app.state.sql_tokenizer([sss], return_tensors="pt").to(app.state.sql_model.device)
-
-            generated_ids = app.state.sql_model.generate(
-                **model_inputs,
-                pad_token_id=app.state.sql_tokenizer.pad_token_id,
-                eos_token_id=app.state.sql_tokenizer.eos_token_id,
-                max_new_tokens=1024,
-                temperature=0.1,
-                top_p=0.8,
-                do_sample=True,
-            )
-            generated_ids = [
-                output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-            ]
-            sql_query = app.state.sql_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
             # 优化sql生成过程不带符号的问题
             # 默认使用序号排序
             try:
@@ -1872,8 +1627,6 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
                     if u + ';' in sql_query and f"`{u}`;" not in sql_query:
                         sql_query = sql_query.replace(u + ';', f"`{u}`;")
 
-            # if "ORDER BY" not in sql_query:
-            #     sql_query = sql_query.replace(';', " ") + " ORDER BY XH;"
             # 这里只是为了补上必要的时间字段
             match = re.search(r'SELECT\s+(.*?)\s+FROM', sql_query, re.IGNORECASE)
             if match:
@@ -1887,13 +1640,16 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
                         sql_query = ensure_year_month_in_select(sql_query, "YEAR_MONTH")
 
             print("sql_query:", sql_query)
+            print("执行 SQL 查询...")
             yield ret_format(f"已生成 SQL 语句为：{sql_query}\n\n")
+            
             try:
+                print("正在执行 SQL 查询...")
                 # 使用 SQLAlchemy 执行 SQL 查询
-                with db_engine.connect() as connection:
+                with (db_engine.connect() as connection):
                     # 使用 text() 包装 SQL 语句以支持原生 SQL
                     result = connection.execute(text(sql_query))
-
+                    print(result, "sql执行结果...")
                     # 如果是查询语句（SELECT），获取结果
                     if sql_query.strip().upper().startswith('SELECT'):
                         # 获取列名
@@ -1901,6 +1657,7 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
                         # 获取所有行数据
                         rows = []
                         select_cn_keys = {}
+
                         for row in result:
                             # 将 Row 对象转换为字典
                             row_dict = {}
@@ -1938,6 +1695,7 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
                                     "finish_reason": "stop"
                                 }]
                             }) + "\n\n"
+                            return
                         else:
                             # 对rows进行重构，用于适应多类目之间的对比分析，去除完全重复的列目
                             # 重构数据为适合的数据格式= 上海市-个人所得税-本月数金额（万元）| 200.0万元
@@ -2074,229 +1832,6 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
         )
 
 
-@app.post("/get_query_info", summary="获取问题信息接口")
-async def get_query_info(
-        question: str = Form(description='问题')):
-    # 此接口不用指定表名-会在目前的四张表中自己根据问题选一张
-    # demo只会选中一张表，因为后续要根据这张表去进行sql优化
-    # 多个词命中情况--多表 预算数和一般公共预算收入
-    # 多个词命中情况--一表多指标
-    # TODO支持结合记忆情况对问题和数据进行适当优化。
-    # TODO:问题可能会被拆分成两个表的查询语句，目前先不考虑连表和多表查询情况
-    question_words = app.state.words_match.find_all(question)
-
-    # TODO:1.多表数据对比类问题 2，数值比对问题比如小于1亿的问题
-    # all_info = {}
-    # 如果问题中没有出现明确的省本级意图，(省级、本级)
-    # 清理结果中的省本级的表。如果出现省本级字眼，其他跟省本级无关的表剔除
-    # 1.先找到所有科目相关的关键词对问题进行分词，判断关键词是否出现，此动作可以直接定位几张表
-    # 2.对问题直接进行表描述级的向量检索，此动作也可以找到相关的top3表
-    # 3.如果关键词没找到，直接根据表检索结果确定
-    # 4.对于4本账的情况分清楚省本级，省级的表定位
-
-    wait_tables = []
-    data1 = {}
-    data2 = {}
-    check_sheng = 1 if any(char in question for char in ['省级', "本级"]) else 0
-    if question_words:
-        ques_words = list(set(question_words))
-        query_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="cate",
-                    match=MatchValue(value="科目/项目")
-                ),
-                FieldCondition(
-                    key="words",
-                    match=MatchAny(any=ques_words)
-                )
-            ]
-        )
-        existing_points = app.state.client.query_points(
-            collection_name=app.state.collection_name,
-            # query=dummy_vector,
-            query_filter=query_filter,
-            limit=len(ques_words),
-            with_payload=True,
-            with_vectors=False,
-            score_threshold=None  # 不过滤分数
-        )
-        # 构建data1映射字典
-        for ww in existing_points.points:
-            for n, u in enumerate(ww.payload["zh_table"]):
-                if u not in data1:
-                    data1[u] = [{ww.payload["words"]: ww.payload["select_code"][n]}]
-                else:
-                    data1[u].append({ww.payload["words"]: ww.payload["select_code"][n]})
-
-        wait_tables.extend(wait_info(existing_points, check_sheng, app.state.use_table_info, source="项目匹配"))
-
-    with torch.no_grad():
-        embedding = app.state.embedding_model.encode([question], convert_to_tensor=True)
-        query_vector = embedding.cpu().numpy().tolist()[0]
-    search_filter = Filter(
-        must=[FieldCondition(
-            key="cate",
-            match=MatchValue(value="表描述"))])
-    results = app.state.client.query_points(
-        collection_name=app.state.collection_name,
-        query=query_vector,
-        query_filter=search_filter,
-        limit=3,
-        with_payload=True,
-        with_vectors=False,
-        score_threshold=None  # 如果需要最低相似度阈值，可在此设置 (如 0.7)
-    )
-    wait_tables.extend(wait_info(results, check_sheng, app.state.use_table_info, source="表描述"))
-    # 相关列匹配,现在用的强匹配
-    col_words = app.state.col_match.find_all(question)
-    if col_words:
-        col_words = list(set(col_words))
-        query_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="cate",
-                    match=MatchValue(value="检索项")
-                ),
-                FieldCondition(
-                    key="words",
-                    match=MatchAny(any=col_words)
-                )
-            ]
-        )
-        col_points = app.state.client.query_points(
-            collection_name=app.state.collection_name,
-            query_filter=query_filter,
-            limit=len(col_words),
-            with_payload=True,
-            with_vectors=False,
-            score_threshold=None  # 不过滤分数
-        )
-        for yy in col_points.points:
-            for n, u in enumerate(yy.payload["zh_table"]):
-                if u not in data2:
-                    data2[u] = [{yy.payload["words"]: yy.payload["table_select"][n]}]
-                else:
-                    data2[u].append({yy.payload["words"]: yy.payload["table_select"][n]})
-        wait_tables.extend(wait_info(col_points, check_sheng, app.state.use_table_info, source="列匹配"))
-    ranker = Text2SQLTableRanker()
-    print("wait_tables:", wait_tables)
-    result = ranker.rank(wait_tables)
-    if result.get("status") == "SUCCESS":
-        table_name = result['selected_table']
-        name = app.state.use_table_info[table_name]['project_key'][0]
-
-        unit_dict = {value: key for key, values in app.state.use_table_info[table_name]['unit'].items() for value in
-                     values}
-        # TODO:基于大模型回复不稳定的问题提出优化方案
-        prompt4 = app.state.prompt4.format(name=name,
-                                           data1=data1.get(table_name, {}), data2=data2.get(table_name, {}),
-                                           )
-        new_question = model_chat(app.state.chat, question, prompt4)
-        print(new_question, "--改良后的问题")
-        # 如果选中了表，那么根据选择过程中的数据去优化问题
-        # 这里要使用一次模型
-        # 5.根据选中的表进行sql生成,要求每个步骤把定位的内容实时输出到控制台
-        demo = app.state.public_data[table_name]
-        en_table_name = app.state.use_table_info[table_name]['table']
-        col_name_dict = {k: v['comment'] for k, v in demo['tables'][en_table_name]['fields'].items()}
-
-        evidence = """
-           **重要提醒**：生成的sql必须将检索的日期维度或者地区维度带上
-           question：2025年12月项目名称为个人所得税的预算数是多少？
-           answer: SELECT `YEAR_MONTH`,`YSS`  FROM `RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC` WHERE `YEAR_MONTH` = '202512' AND `XM_NAME` = '个人所得税';
-           question：2025年2月到202510月期间科目编码为205的本月金额分别是多少？
-           answer:SELECT `YEAR_MONTH`,`BYS_JE` FROM RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC WHERE `YEAR_MONTH` BETWEEN '202502' AND '202510' AND `XM_CODE` = '205'  ORDER BY XH;
-           """
-        prompt = app.state.nl2sqlite_template_cn.format(
-            dialect="MySQL", db_schema=demo,
-            question=new_question, evidence=evidence)
-        message = [{'role': 'user', 'content': prompt}]
-
-        sss = app.state.sql_tokenizer.apply_chat_template(
-            message,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-        model_inputs = app.state.sql_tokenizer([sss], return_tensors="pt").to(app.state.sql_model.device)
-
-        generated_ids = app.state.sql_model.generate(
-            **model_inputs,
-            pad_token_id=app.state.sql_tokenizer.pad_token_id,
-            eos_token_id=app.state.sql_tokenizer.eos_token_id,
-            max_new_tokens=1024,
-            temperature=0.1,
-            top_p=0.8,
-            do_sample=True,
-        )
-        generated_ids = [
-            output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-        ]
-        sql_query = app.state.sql_tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        # 优化sql生成过程不带符号的问题
-        # 默认使用序号排序
-        try:
-            table_data_col = list(demo['tables'].values())[0]['fields'].keys()
-        except:
-            table_data_col = None
-            print("没有找到table_data_col。。。")
-        if table_data_col:
-            for u in table_data_col:
-                if u + ' ' in sql_query and f"`{u}` " not in sql_query:
-                    sql_query = sql_query.replace(u + ' ', f"`{u}` ")
-                if u + ',' in sql_query and f"`{u}`," not in sql_query:
-                    sql_query = sql_query.replace(u + ',', f"`{u}`,")
-                if u + ';' in sql_query and f"`{u}`;" not in sql_query:
-                    sql_query = sql_query.replace(u + ';', f"`{u}`;")
-
-        if "ORDER BY" not in sql_query:
-            sql_query = sql_query.replace(';', " ") + " ORDER BY XH;"
-        print("sql_query:", sql_query)
-        try:
-            # 使用 SQLAlchemy 执行 SQL 查询
-            with db_engine.connect() as connection:
-                # 使用 text() 包装 SQL 语句以支持原生 SQL
-                result = connection.execute(text(sql_query))
-
-                # 如果是查询语句（SELECT），获取结果
-                if sql_query.strip().upper().startswith('SELECT'):
-                    # 获取列名
-                    columns = result.keys()
-                    # 获取所有行数据
-                    rows = []
-                    for row in result:
-                        # 将 Row 对象转换为字典
-                        row_dict = {}
-                        for i, column in enumerate(columns):
-                            key = col_name_dict[column] if column in col_name_dict else column
-                            if column in unit_dict:
-                                row_dict[key] = f"{row[i]}{unit_dict[column]}"
-                            else:
-                                row_dict[key] = row[i]
-                        rows.append(row_dict)
-                    ret = {"status": 'success', "data": json.dumps(rows, ensure_ascii=False), "sql_query": sql_query,
-                           "new_question": new_question, "table_name": table_name,
-                           "demo": json.dumps(demo, ensure_ascii=False), "message": "success"
-                           }
-                    print("rows---->", ret)
-                    return ret
-
-
-        except SQLAlchemyError as e:
-            # 捕获 SQLAlchemy 相关错误
-            error_msg = str(e.__cause__) if e.__cause__ else str(e)
-            return {"status": "error", "message": f"执行SQL查询失败，错误信息为：{error_msg}"}
-
-        except Exception as e:
-            # 捕获其他异常
-            return {"status": "error", "message": f"执行SQL查询失败，错误信息为：{str(e)}"}
-
-    else:
-        return {"status": "error", "message": f"没有选中表时设计兜底策略"}
-        # TODO:没有选中表时设计兜底策略
-        # return {"status": "FAIL", "message": "没有找到相关表"}
-
-
 @app.post("/get_image_info", summary="获取图片信息")
 async def get_image_info(request: Request,
                          data: str = Form(description='返回的查询数据', default=""),
@@ -2369,4 +1904,4 @@ app.add_middleware(  # 解决跨域问题
 if __name__ == '__main__':
     import uvicorn
 
-    uvicorn.run('bge_main2:app', host=f'192.168.100.160', port=8787, workers=1)
+    uvicorn.run('bge_main_new_liu:app', host=f'192.168.100.160', port=8794, workers=1)

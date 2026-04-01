@@ -180,7 +180,7 @@ class Text2SQLTableRanker:
                 'top_table': best_match['table'],
                 'all_candidates': results
             }
-        # 规则3：top1和top2过近，说明区分度不足
+        # TODO:规则3：top1和top2过近，说明区分度不足
         if len(results) > 1:
             if best_match['final_score'] < self.min_confidence:
                 return {
@@ -244,7 +244,7 @@ db_user_name = 'hbch'
 db_pwd = 'hbch2711'
 db_host = '192.168.100.160'
 port = 3306
-db_name = 'RDYS_PUBLIC_TBS'
+db_name = 'RDYS_PUBLIC_TBS_WU'
 db_engine = create_engine(f"mysql+pymysql://{db_user_name}:{db_pwd}@{db_host}:{port}/{db_name}")
 
 
@@ -259,7 +259,7 @@ async def load_models():
 
     )  # password=REDIS_PASS
 
-    with open('RDYS_PUBLIC_TBS_only10.json', 'r', encoding='utf-8') as f:
+    with open('text2sql_project/RDYS_PUBLIC_TBS_WU.json', 'r', encoding='utf-8') as f:
         data = json.load(f)
         table_dict2 = {}
 
@@ -278,14 +278,14 @@ async def load_models():
         timeout=60
     )
 
-    with open('table_info.json', 'r', encoding='utf-8') as f4:
+    with open('text2sql_project/table_info.json', 'r', encoding='utf-8') as f4:
         app.state.use_table_info = json.load(f4)
 
-    with open('project_words.txt', 'r', encoding='utf-8') as f2:
+    with open('text2sql_project/project_words.txt', 'r', encoding='utf-8') as f2:
         word_list = [x.strip() for x in f2.readlines()]
-    with open('col_words.txt', 'r', encoding='utf-8') as f3:
+    with open('text2sql_project/col_words.txt', 'r', encoding='utf-8') as f3:
         col_word_list = [x.strip() for x in f3.readlines()]
-    app.state.collection_name = "all_data_test_0317"  # all_data_test_0317 db_words_feng_260304
+    app.state.collection_name = "db_words_wu"  # all_data_test_0317 db_words_feng_260304
     app.state.words_match = KeywordMatcher(word_list)
     app.state.col_match = KeywordMatcher(col_word_list)
     app.state.zone_dict = {'河北省': '130000000', '河北省本级': '130000000', '邢台市': '130500000',
@@ -456,7 +456,7 @@ async def load_models():
         {demo_data1}
 
         【示例输入】
-        data = [{{'业务年度': '202508', '本月数—金额': '1161668.000000万元'}}, {{'业务年度': '202507', '本月数—金额': '1263361.000000万元'}}, {{'业务年度': '202509', '本月数—金额': '1870492.000000万元'}}]
+        data = [{{'business_year_and_month': '202508', 'current_month_actual_amount': '1161668.000000万元'}}, {{'business_year_and_month': '202507', 'current_month_actual_amount': '1263361.000000万元'}}, {{'business_year_and_month': '202509', 'current_month_actual_amount': '1870492.000000万元'}}]
         table_name = "预算审查监督-预算执行表-全省一般公共预算支出完成情况表"
         query = "2025年2月到202510月期间教育支出的本月金额分别是多少？"
         **补充说明**（供你内部参考）
@@ -503,7 +503,6 @@ async def load_models():
 - 表 schema
 - 命中的项目编码
 - 查询相关列候选
-- 区划编码
 - 当前日期
 - chart_hint（可选，取值可能为：line、bar、pie、auto）
 
@@ -512,7 +511,6 @@ async def load_models():
 ## 任务
 请根据输入补全以下内容：
 - 时间范围
-- 区划编码
 - 项目编码
 - 核心意图
 - 查询相关列
@@ -541,8 +539,7 @@ async def load_models():
 
 ## 规则
 
-### 1）区划编码、项目编码
-- 区划编码直接使用输入提供的值，不提取、不改写。
+### 1）项目编码
 - 项目编码直接使用输入提供的值，不提取、不改写。
 - 最终输出中：
   - 若项目编码非空，写“项目编码为【项目编码】”
@@ -699,7 +696,7 @@ async def load_models():
 ---
 
 ### 8）输出格式（严格遵守）
-在【实际时间范围】内，查询区划编码为【区划编码】且项目编码为【项目编码】的【查询相关列】数据。  
+在【实际时间范围】内，查询项目编码为【项目编码】的【查询相关列】数据。  
 查询类型为：【核心意图】。  
 结果中返回以下字段或指标：【指标列表】。  
 【如存在分组维度，则补充：按【分组维度】统计。】  
@@ -723,9 +720,6 @@ async def load_models():
 
 【查询相关列候选】  
 {relevant_columns_candidates}
-
-【区划编码】  
-{region_value}
 
 【当前日期】  
 {now_date}
@@ -1540,7 +1534,7 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
             if zone_words:
                 region_value = "、".join(set([app.state.zone_dict.get(i, "130000000") for i in zone_words]))
             else:
-                region_value = "130000000"  # 区域code
+                region_value = ""  # 区域code
 
             if question_words:
                 print(data1.get(table_name, []), "项目字典....")
@@ -1604,9 +1598,9 @@ async def sql3(request: Request, background_tasks: BackgroundTasks):
             # TODO:优化evidence 为列映射和模式说明
             evidence = """
                question：2025年12月项目名称为个人所得税的预算数是多少？
-               answer: SELECT `YEAR_MONTH`,`YSS`  FROM `RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC` WHERE `YEAR_MONTH` = '202512' AND `XM_NAME` = '个人所得税';
+               answer: SELECT `business_year_and_month`,`full_year_total_budget_amount`  FROM `RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC` WHERE `business_year_and_month` = '202512' AND `project_name` = '个人所得税';
                question：2025年2月到2025年10月期间科目编码为205的本月金额分别是多少？
-               answer:SELECT `YEAR_MONTH`,`BYS_JE` FROM RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC WHERE `YEAR_MONTH` BETWEEN '202502' AND '202510' AND `XM_CODE` = '205'  ORDER BY XH;
+               answer:SELECT `business_year_and_month`,`current_month_actual_amount` FROM RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC WHERE `business_year_and_month` BETWEEN '202502' AND '202510' AND `project_code` = '205';
                """
             sql_query_json = get_text2sql(new_question, demo, evidence)
             if sql_query_json['status']=='success':
@@ -1848,7 +1842,7 @@ async def get_image_info(request: Request,
         task_status = app.state.redis.get(question.strip() + "_task_cache")
         if task_status:
             print(f"{task_status}任务执行中...")
-            # 执行中的任务怎么杀死后续优化..目前执行中就等着任务绝对不会超过2分钟
+            #TODO:执行中的任务怎么杀死后续优化..目前执行中就等着任务绝对不会超过2分钟
             return {"status": "error", "data": task_status}
         else:
             if data and table_name:
@@ -1905,4 +1899,4 @@ app.add_middleware(  # 解决跨域问题
 if __name__ == '__main__':
     import uvicorn
 
-    uvicorn.run('bge_main2:app', host=f'192.168.100.160', port=8787, workers=1)
+    uvicorn.run('bge_main_new:app', host=f'192.168.100.160', port=8792, workers=1)

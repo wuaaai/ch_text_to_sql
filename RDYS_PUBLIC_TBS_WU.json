@@ -1,0 +1,743 @@
+{
+  "db_id": "RDYS_PUBLIC_TBS_WU",
+  "schema": "RDYS_PUBLIC_TBS_WU",
+  "tables": {
+    "RDYS_LD_YSSC_YSZX_QSYBGGYSZCWC": {
+      "fields": {
+        "Primary Key": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": true,
+          "nullable": false,
+          "default": null,
+          "autoincrement": false,
+          "comment": "数据的唯一标识，主键",
+          "examples": [
+            "667ba044-444f-4736-a7eb-f449372a9a100",
+            "667ba044-444f-4736-a7eb-f449372a9a101",
+            "667ba044-444f-4736-a7eb-f449372a9a102",
+            "667ba044-444f-4736-a7eb-f449372a9a103",
+            "667ba044-444f-4736-a7eb-f449372a9a104"
+          ]
+        },
+        "business_year_and_month": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "记录业务发生的年份和月份，格式为YYYYMM",
+          "examples": [
+            "202505",
+            "202506",
+            "202507",
+            "202508",
+            "202509"
+          ]
+        },
+        "project_code": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "预算项目编码",
+          "examples": [
+            "204",
+            "205",
+            "206",
+            "207",
+            "208"
+          ]
+        },
+        "project_name": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "预算项目名称",
+          "examples": [
+            "公共安全支出",
+            "教育支出",
+            "科学技术支出",
+            "文化旅游体育与传媒支出",
+            "社会保障和就业支出"
+          ]
+        },
+        "full_year_total_budget_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "项目全年的总预算额度",
+          "examples": [
+            "4671470.0",
+            "18346239.0",
+            "1316642.0",
+            "1240502.0",
+            "18646233.0"
+          ]
+        },
+        "current_month_actual_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "当前月份发生的实际金额",
+          "examples": [
+            "303623.0",
+            "1208348.0",
+            "55555.0",
+            "76413.0",
+            "1375624.0"
+          ]
+        },
+        "last_year_same_month_actual_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "去年同月份发生的实际金额",
+          "examples": [
+            "319639.0",
+            "1207912.0",
+            "62579.0",
+            "71207.0",
+            "926926.0"
+          ]
+        },
+        "year_over_year_current_month_difference_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本月金额减去上年本月金额的差额（正数为增加，负数为减少）",
+          "examples": [
+            "-16016.0",
+            "436.0",
+            "-7024.0",
+            "5206.0",
+            "448698.0"
+          ]
+        },
+        "year_over_year_current_month_difference_percentage": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本月金额相较于上年同月的增长或减少百分比",
+          "examples": [
+            "-5.0",
+            "0.0",
+            "-11.2",
+            "7.3",
+            "48.4"
+          ]
+        },
+        "current_year_accumulated_amount_to_current_month": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "从本年1月截至本月的累计发生总额",
+          "examples": [
+            "1723704.0",
+            "7566064.0",
+            "473371.0",
+            "490407.0",
+            "9976893.0"
+          ]
+        },
+        "current_year_accumulated_amount_execution_percentage": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额占全年预算金额的百分比",
+          "examples": [
+            "36.9",
+            "41.2",
+            "36.0",
+            "39.5",
+            "53.5"
+          ]
+        },
+        "last_year_accumulated_amount_to_same_month": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "去年1月至去年同月的累计发生总额",
+          "examples": [
+            "1641392.0",
+            "7163578.0",
+            "527797.0",
+            "413989.0",
+            "8700216.0"
+          ]
+        },
+        "year_over_year_accumulated_difference_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额减去上年同期累计金额的增减额",
+          "examples": [
+            "82312.0",
+            "402486.0",
+            "-54426.0",
+            "76418.0",
+            "1276677.0"
+          ]
+        },
+        "year_over_year_accumulated_difference_percentage": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额相较于上年同期累计金额的增减百分比",
+          "examples": [
+            "5.0",
+            "5.6",
+            "-10.3",
+            "18.5",
+            "14.7"
+          ]
+        },
+        "current_year_accumulated_amount_to_last_month": {
+          "type": "DECIMAL(20, 0)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "截至本年上一个月份的累计金额",
+          "examples": [
+            "1420081.0",
+            "6357716.0",
+            "417816.0",
+            "413994.0",
+            "8601269.0"
+          ]
+        },
+        "last_year_accumulated_amount_to_last_month": {
+          "type": "DECIMAL(20, 0)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "截至去年上一个月份的累计金额",
+          "examples": [
+            "1321753.0",
+            "5955666.0",
+            "465218.0",
+            "342782.0",
+            "7773290.0"
+          ]
+        }
+      },
+      "examples": [],
+      "comment": "预算审查监督-预算执行表-全省一般公共预算支出完成情况表"
+    },
+    "RDYS_LD_YSZX_YBGGYS_SBJZCWCQK": {
+      "fields": {
+        "Primary Key": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": true,
+          "nullable": false,
+          "default": null,
+          "autoincrement": false,
+          "comment": "数据的唯一标识，主键",
+          "examples": [
+            "d83f96b9-204c-4872-ae2d-431349ad2a100",
+            "d83f96b9-204c-4872-ae2d-431349ad2a101",
+            "d83f96b9-204c-4872-ae2d-431349ad2a102",
+            "d83f96b9-204c-4872-ae2d-431349ad2a103",
+            "d83f96b9-204c-4872-ae2d-431349ad2a104"
+          ]
+        },
+        "business_year_and_month": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "记录业务发生的年份和月份，格式为YYYYMM",
+          "examples": [
+            "202505",
+            "202506",
+            "202507",
+            "202508",
+            "202509"
+          ]
+        },
+        "project_code": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "预算项目编码",
+          "examples": [
+            "204",
+            "205",
+            "206",
+            "207",
+            "208"
+          ]
+        },
+        "project_name": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "预算项目名称",
+          "examples": [
+            "公共安全支出",
+            "教育支出",
+            "科学技术支出",
+            "文化旅游体育与传媒支出",
+            "社会保障和就业支出"
+          ]
+        },
+        "full_year_total_budget_amount": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "项目全年的总预算额度",
+          "examples": [
+            "833517.0",
+            "3106467.0",
+            "426214.0",
+            "291673.0",
+            "5301321.0"
+          ]
+        },
+        "current_month_actual_amount": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "当前月份发生的实际金额",
+          "examples": [
+            "39337.0",
+            "183493.0",
+            "14348.0",
+            "15895.0",
+            "348041.0"
+          ]
+        },
+        "last_year_same_month_actual_amount": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "去年同月份发生的实际金额",
+          "examples": [
+            "52574.0",
+            "159387.0",
+            "15448.0",
+            "14450.0",
+            "51629.0"
+          ]
+        },
+        "year_over_year_current_month_difference_amount": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本月金额减去上年本月金额的差额（正数为增加，负数为减少）",
+          "examples": [
+            "-13237.0",
+            "24106.0",
+            "-1100.0",
+            "1445.0",
+            "296412.0"
+          ]
+        },
+        "year_over_year_current_month_difference_percentage": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本月金额相较于上年同月的增长或减少百分比",
+          "examples": [
+            "-25.2",
+            "15.1",
+            "-7.1",
+            "10.0",
+            "574.1"
+          ]
+        },
+        "current_year_accumulated_amount_to_current_month": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "从本年1月截至本月的累计发生总额",
+          "examples": [
+            "238622.0",
+            "1009024.0",
+            "161033.0",
+            "82727.0",
+            "3768319.0"
+          ]
+        },
+        "current_year_accumulated_amount_execution_percentage": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额占全年预算金额的百分比",
+          "examples": [
+            "28.6",
+            "32.5",
+            "37.8",
+            "28.4",
+            "71.1"
+          ]
+        },
+        "last_year_accumulated_amount_to_same_month": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "去年1月至去年同月的累计发生总额",
+          "examples": [
+            "244583.0",
+            "933187.0",
+            "164554.0",
+            "77137.0",
+            "3189196.0"
+          ]
+        },
+        "year_over_year_accumulated_difference_amount": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额减去上年同期累计金额的增减额",
+          "examples": [
+            "-5961.0",
+            "75837.0",
+            "-3521.0",
+            "5590.0",
+            "579123.0"
+          ]
+        },
+        "year_over_year_accumulated_difference_percentage": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额相较于上年同期累计金额的增减百分比",
+          "examples": [
+            "-2.4",
+            "8.1",
+            "-2.1",
+            "7.2",
+            "18.2"
+          ]
+        },
+        "current_year_accumulated_amount_to_last_month": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "截至本年上一个月份的累计金额",
+          "examples": [
+            "199285.0",
+            "825531.0",
+            "146685.0",
+            "66832.0",
+            "3420278.0"
+          ]
+        },
+        "last_year_accumulated_amount_to_last_month": {
+          "type": "DECIMAL(20, 4)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "截至去年上一个月份的累计金额",
+          "examples": [
+            "192009.0",
+            "773800.0",
+            "149106.0",
+            "62687.0",
+            "3137567.0"
+          ]
+        }
+      },
+      "examples": [],
+      "comment": "预算执行-省本级一般公共预算支出完成情况表"
+    },
+    "RDYS_LD_YSSC_YSZX_QSYBGGYSSRWC": {
+      "fields": {
+        "Primary Key": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": true,
+          "nullable": false,
+          "default": null,
+          "autoincrement": false,
+          "comment": "数据的唯一标识，主键",
+          "examples": [
+            "025591b1-cb14-4c34-9abe-121178023031",
+            "0273f05d-8c9d-423f-92af-0103556134be",
+            "043954e3-5a57-4cc3-921b-a4613c9946ae",
+            "045e1abb-ef63-4de8-8dc9-7cb45be85f85",
+            "04a43233-dcb8-418e-a6f7-e7aec8881a3a"
+          ]
+        },
+        "business_year_and_month": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "记录业务发生的年份和月份，格式为YYYYMM",
+          "examples": [
+            "202510",
+            "202507",
+            "202509",
+            "202508",
+            "202505"
+          ]
+        },
+        "project_code": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "预算项目编码",
+          "examples": [
+            "10104",
+            "101",
+            "103",
+            "10119",
+            "hj"
+          ]
+        },
+        "project_name": {
+          "type": "VARCHAR(255) COLLATE \"utf8mb4_unicode_ci\"",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "预算项目名称",
+          "examples": [
+            "企业所得税",
+            "税收收入",
+            "非税收入",
+            "契税等其他税收",
+            "合    计"
+          ]
+        },
+        "full_year_total_budget_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "项目全年的总预算额度",
+          "examples": [
+            "3385000.0",
+            "26780000.0",
+            "17183000.0",
+            "2455000.0",
+            "43963000.0"
+          ]
+        },
+        "current_month_actual_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "当前月份发生的实际金额",
+          "examples": [
+            "564556.0",
+            "2334219.0",
+            "201501.0",
+            "200427.0",
+            "2143941.0"
+          ]
+        },
+        "last_year_same_month_actual_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "去年同月份发生的实际金额",
+          "examples": [
+            "486738.0",
+            "2146885.0",
+            "272378.0",
+            "186960.0",
+            "2106197.0"
+          ]
+        },
+        "year_over_year_current_month_difference_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本月金额减去上年本月金额的差额（正数为增加，负数为减少）",
+          "examples": [
+            "77818.0",
+            "187334.0",
+            "-70877.0",
+            "13467.0",
+            "37744.0"
+          ]
+        },
+        "year_over_year_current_month_difference_percentage": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本月金额相较于上年同月的增长或减少百分比",
+          "examples": [
+            "15.99",
+            "8.73",
+            "-26.02",
+            "7.2",
+            "1.79"
+          ]
+        },
+        "current_year_accumulated_amount_to_current_month": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "从本年1月截至本月的累计发生总额",
+          "examples": [
+            "3289736.0",
+            "22723082.0",
+            "12289146.0",
+            "2038097.0",
+            "31122031.0"
+          ]
+        },
+        "current_year_accumulated_amount_execution_percentage": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额占全年预算金额的百分比",
+          "examples": [
+            "97.19",
+            "84.85",
+            "71.52",
+            "83.02",
+            "70.79"
+          ]
+        },
+        "last_year_accumulated_amount_to_same_month": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "去年1月至去年同月的累计发生总额",
+          "examples": [
+            "3082447.0",
+            "21949467.0",
+            "12240790.0",
+            "1934382.0",
+            "30576872.0"
+          ]
+        },
+        "year_over_year_accumulated_difference_amount": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额减去上年同期累计金额的增减额",
+          "examples": [
+            "207289.0",
+            "773615.0",
+            "48356.0",
+            "103715.0",
+            "545159.0"
+          ]
+        },
+        "year_over_year_accumulated_difference_percentage": {
+          "type": "DECIMAL(20, 6)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "本年累计金额相较于上年同期累计金额的增减百分比",
+          "examples": [
+            "6.72",
+            "3.52",
+            "0.4",
+            "5.36",
+            "1.78"
+          ]
+        },
+        "current_year_accumulated_amount_to_last_month": {
+          "type": "DECIMAL(20, 0)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "截至本年上一个月份的累计金额",
+          "examples": [
+            "890803.0",
+            "7333414.0",
+            "1936641.0",
+            "504534.0"
+          ]
+        },
+        "last_year_accumulated_amount_to_last_month": {
+          "type": "DECIMAL(20, 0)",
+          "primary_key": false,
+          "nullable": true,
+          "default": null,
+          "autoincrement": false,
+          "comment": "截至去年上一个月份的累计金额",
+          "examples": [
+            "890022.0",
+            "7347652.0",
+            "2120320.0",
+            "422689.0"
+          ]
+        }
+      },
+      "examples": [],
+      "comment": "预算审查监督-预算执行表-全省一般公共预算收入完成情况表"
+    }
+  },
+  "foreign_keys": []
+}
